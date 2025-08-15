@@ -42,7 +42,7 @@
 		#sound-dai-cells = <0>;
 
 		/* Optional: SD_MODE (enable/shutdown) pin - adjust to your wiring */
-		sdmode-gpios = <&gpioz 3 GPIO_ACTIVE_HIGH>;
+		sdmode-gpios = <&gpioz 4 GPIO_ACTIVE_HIGH>;
 	};
  
 	/*
@@ -146,20 +146,20 @@
 
 		sai2b_pins: sai2b-0 {
 			pins {
-				pinmux = <STM32_PINMUX('E', 12, AF10)>,
-						 <STM32_PINMUX('E', 13, AF10)>,
-						 <STM32_PINMUX('E', 14, AF10)>;
-			slew-rate = <0>;
-			drive-push-pull;
-			bias-disable;
+				pinmux = <STM32_PINMUX('I', 5, AF10)>,  // SAI2_SCK_A
+						 <STM32_PINMUX('I', 7, AF10)>,  // SAI2_FS_A
+						 <STM32_PINMUX('F', 11, AF10)>; // SAI2_SD_B
+				bias-disable;
+				drive-push-pull;
+				slew-rate = <0>;
 			};
 		};
- 
+
 		sai2b_sleep_pins: sai2b-1 {
 			pins {
-				pinmux = <STM32_PINMUX('E', 12, AF10)>,
-						 <STM32_PINMUX('E', 13, AF10)>,
-						 <STM32_PINMUX('E', 14, AF10)>;
+				pinmux = <STM32_PINMUX('I', 5, AF10)>,
+						 <STM32_PINMUX('I', 7, AF10)>,
+						 <STM32_PINMUX('F', 11, AF10)>;
 			};
 		};
 	};
