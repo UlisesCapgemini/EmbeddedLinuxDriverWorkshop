@@ -1,0 +1,166 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
+/*
+* STM32MP157D-DK1 + MAX98357A + INMP441 
+*/
+ 
+/dts-v1/;
+ 
+#include "stm32mp157.dtsi"
+#include "stm32mp15xd.dtsi"
+#include "stm32mp15-pinctrl.dtsi"
+#include "stm32mp15xxac-pinctrl.dtsi"
+#include "stm32mp15xx-dkx.dtsi"
+#include "stm32mp157a-dk1-scmi.dtsi"
+ 
+/ {
+	model = "STMicroelectronics STM32MP157D-DK1 Discovery Board (MAX98357A)";
+	compatible = "st,stm32mp157d-dk1", "st,stm32mp157";
+ 
+	aliases {
+		ethernet0 = &ethernet0;
+	};
+ 
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+	sound {
+    		status = "disabled";
+	};
+ 
+	/* Codec node: no control bus, just a DAI */
+	max98357a: max98357a@0 {
+		compatible = "maxim,max98357a";
+		#sound-dai-cells = <0>;
+ 
+		/* Optional: SD_MODE (enable/shutdown) pin - adjust to your wiring */
+		sdmode-gpios = <&gpioz 3 GPIO_ACTIVE_HIGH>;
+	};
+
+	/* INMP441 Codec node */
+	inmp441: inmp441@0 {
+		compatible = "invensense,inmp441";
+		#sound-dai-cells = <0>;
+
+		/* Optional: SD_MODE (enable/shutdown) pin - adjust to your wiring */
+		sdmode-gpios = <&gpioz 3 GPIO_ACTIVE_HIGH>;
+	};
+ 
+	/*
+	 * A new sound card node with a unique name to avoid clashing
+	 * with any 'sound' node provided by included DK files.
+	 */
+	sound_max98357a: sound-max98357a {
+	    compatible = "simple-audio-card";
+	    simple-audio-card,name = "stm32mp1-max98357a";
+	    simple-audio-card,format = "i2s";
+ 
+	    /* CPU drives clocks */
+	    simple-audio-card,bitclock-master = <&dai_cpu_out>;
+	    simple-audio-card,frame-master    = <&dai_cpu_out>;
+ 
+	    /* MCLK/Fs ratio used by the CPU DAI internally (even if MCLK pin not used) */
+	    simple-audio-card,mclk-fs = <256>;
+ 
+	    /* Optional, but helps some stacks */
+	    dai-tdm-slot-num = <2>;
+	    dai-tdm-slot-width = <32>;
+ 
+	    dai_cpu_out: simple-audio-card,cpu {
+			sound-dai = <&sai2a>;
+	    };
+ 
+	    simple-audio-card,codec {
+			sound-dai = <&max98357a>;
+	    };
+	};
+	mic_inmp441: mic-inmp441 {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "stm32mp1-inmp441";
+		simple-audio-card,format = "i2s";
+		
+		/* CPU drives clocks */
+	    simple-audio-card,bitclock-master = <&dai_cpu_in>;
+	    simple-audio-card,frame-master    = <&dai_cpu_in>;
+
+		/* MCLK/Fs ratio used by the CPU DAI internally (even if MCLK pin not used) */
+	    simple-audio-card,mclk-fs = <256>;
+
+		/* Optional, but helps some stacks */
+	    dai-tdm-slot-num = <2>;
+	    dai-tdm-slot-width = <32>;
+
+		dai_cpu_in: simple-audio-card,cpu {
+			sound-dai = <&sai2b>;
+	    };
+ 
+	    simple-audio-card,codec {
+			sound-dai = <&inmp441>;
+	    };
+	};
+	sai2 {
+	    /* Set a sane parent and rate SAI can derive BCLK/LRCLK from */
+	    assigned-clocks = <&rcc SAI2_K>;
+	    assigned-clock-parents = <&rcc PLL3_Q>;   /* or PLL3_R depending on tree */
+	    assigned-clock-rates = <12288000>;        /* 12.288 MHz for 48k family (256×Fs) */
+	    status = "okay";
+	};
+	sai2a {
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&sai2a_pins>;
+		pinctrl-1 = <&sai2a_sleep_pins>;
+		status = "okay";
+	};
+	sai2b {
+		pinctrl-names = "default", "sleep";
+		pinctrl-0 = <&sai2b_pins>;
+		pinctrl-1 = <&sai2b_sleep_pins>;
+		status = "okay";
+	}
+	pinctrl {
+	/*
+	 * Pin mux for SAI2_A on Port I (AF10).
+	 * Adjust only if your hardware uses different pads.
+	 *
+	 * PI5 = SAI2_SCK_A (BCLK)
+	 * PI7 = SAI2_FS_A  (LRCLK)
+	 * PI6 = SAI2_SD_A  (SD out to MAX98357A DIN)
+	 */
+		sai2a_pins: sai2a-0 {
+			pins {
+				pinmux = <STM32_PINMUX('I', 5, AF10)>,
+						 <STM32_PINMUX('I', 7, AF10)>,
+						 <STM32_PINMUX('I', 6, AF10)>;
+				bias-disable;
+				drive-push-pull;
+				slew-rate = <0>;
+			};
+		};
+ 
+		sai2a_sleep_pins: sai2a-1 {
+			pins {
+				pinmux = <STM32_PINMUX('I', 5, AF10)>,
+						 <STM32_PINMUX('I', 7, AF10)>,
+						 <STM32_PINMUX('I', 6, AF10)>;
+			};
+		};
+
+		sai2b_pins: sai2b-0 {
+			pins {
+				pinmux = <STM32_PINMUX('E', 12, AF10)>,
+						 <STM32_PINMUX('E', 13, AF10)>,
+						 <STM32_PINMUX('E', 14, AF10)>;
+			slew-rate = <0>;
+			drive-push-pull;
+			bias-disable;
+			};
+		};
+ 
+		sai2b_sleep_pins: sai2b-1 {
+			pins {
+				pinmux = <STM32_PINMUX('E', 12, AF10)>,
+						 <STM32_PINMUX('E', 13, AF10)>,
+						 <STM32_PINMUX('E', 14, AF10)>;
+			};
+		};
+	};
+};
