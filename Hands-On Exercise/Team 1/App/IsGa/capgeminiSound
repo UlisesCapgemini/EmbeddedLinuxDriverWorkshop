@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#   capgeminiSound - A custom command for audio functionality
+#   capgeminiSound - A custom linux command for audio functionality
 #
 #   1. Support `--record` to record audio to a specified WAV audio file. The recording duration is automatically set to 5 seconds
 #   2. Support `--play` to play the most recently recorded/played WAV audio file
