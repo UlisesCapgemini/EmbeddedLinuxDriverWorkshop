@@ -115,7 +115,7 @@
 		pinctrl-0 = <&sai2b_pins>;
 		pinctrl-1 = <&sai2b_sleep_pins>;
 		status = "okay";
-	}
+	};
 	pinctrl {
 	/*
 	 * Pin mux for SAI2_A on Port I (AF10).
