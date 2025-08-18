@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
+%YAML 1.2
+---
+$id: "http://devicetree.org/schemas/sound/invensense,inmp441.yaml#"
+$schema: "http://devicetree.org/meta-schemas/core.yaml#"
+
+title: Invensense INMP441 I2S Microphone
+
+maintainers:
+  - Andres Mora <andres.mora@capgemini.com>
+
+description: |
+  The Invensense INMP441 is a MEMS digital microphone that provides I2S output.
+  This binding describes the minimal device node for this microphone when
+  integrated as a sound codec in an ALSA SoC audio setup.
+
+properties:
+  compatible:
+    const: invensense,inmp441
+
+  "#sound-dai-cells":
+    const: 0
+
+  sdmode-gpios:
+    description: Optional GPIO to control shutdown/power-down mode
+    maxItems: 1
+
+required:
+  - compatible
+  - "#sound-dai-cells"
+
+additionalProperties: false
+
+examples:
+  - |
+    inmp441: microphone@0 {
+      compatible = "invensense,inmp441";
+      #sound-dai-cells = <0>;
+      sdmode-gpios = <&gpioz 3 GPIO_ACTIVE_HIGH>;
+    };
