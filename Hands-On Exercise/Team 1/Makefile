@@ -1,15 +1,22 @@
-obj-m += hello.o
-
-KDIR = /lib/modules/$(shell uname -r)/build
-
-all:
-	make -C $(KDIR) M=$(PWD) modules
-
-clean:
-	make -C $(KDIR) M=$(PWD) clean
-
+# Makefile for simple external out-of-tree Linux kernel module example
+ 
+# Object file(s) to be built
+obj-m:= max98357a.o inmp441.o
+ 
+# Path to the directory that contains the Linux kernel source code
+# and the configuration file (.config)
+KERNEL_DIR =  $(KERNEL_SRC_PATH)
+ 
+# Path to the directory that contains the generated objects
+DESTDIR?= $(KERNEL_DIR)/install_artifact
+ 
+# Path to the directory that contains the source file(s) to compile
+PWD:= $(shell pwd) 
+default:
+	$(MAKE) -C $(KERNEL_SRC_PATH) M=$(PWD) modules
+ 
 install:
-	sudo insmod hello.ko
-
-uninstall:
-	sudo rmmod hello
+	$(MAKE) -C $(KERNEL_SRC_PATH) M=$(PWD) INSTALL_MOD_PATH=$(DESTDIR) modules_install
+ 
+clean:
+	$(MAKE) -C $(KERNEL_SRC_PATH) M=$(PWD) clean
