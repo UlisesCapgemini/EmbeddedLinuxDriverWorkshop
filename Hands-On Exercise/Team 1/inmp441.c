@@ -53,7 +53,7 @@ static void inmp441_remove(struct snd_soc_component *component)
  * This defines the audio capture capabilities of the INMP441
  */
 static struct snd_soc_dai_driver inmp441_dai = {
-	.name = "inmp441-hifi", // DAI name, referenced by simple-audio-card
+	.name = "invensense,inmp441", // DAI name, referenced by simple-audio-card
 
 	.capture = {
 		.stream_name = "Capture",    // Name shown in ALSA
@@ -128,6 +128,25 @@ static struct platform_driver inmp441_driver = {
 	},
 	.probe = inmp441_platform_probe, // Called when DT match occurs
 };
+
+// static const struct snd_soc_dapm_widget inmp441_dapm_widgets[] = {
+//     SND_SOC_DAPM_MIC("MIC1", NULL),
+//     SND_SOC_DAPM_INPUT("Mic Jack"),
+//     SND_SOC_DAPM_SUPPLY("Mic Bias", NULL, 0, NULL, 0),
+// };
+
+// static const struct snd_soc_dapm_route inmp441_dapm_routes[] = {
+//     {"MIC1", NULL, "Mic Jack"},
+//     {"Mic Bias", NULL, "Mic Jack"},
+// };
+
+// static struct snd_soc_component_driver soc_codec_dev_inmp441 = {
+//     .dapm_widgets = inmp441_dapm_widgets,
+//     .num_dapm_widgets = ARRAY_SIZE(inmp441_dapm_widgets),
+//     .dapm_routes = inmp441_dapm_routes,
+//     .num_dapm_routes = ARRAY_SIZE(inmp441_dapm_routes),
+//     // ...existing code...
+// };
 
 // This macro sets up init and exit routines automatically
 module_platform_driver(inmp441_driver);
