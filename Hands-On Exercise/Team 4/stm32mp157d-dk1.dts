@@ -66,11 +66,11 @@
 		sound-dai = <&sai2a>;
 	    };
  
-	    dai_codec_out: simple-audio-card,codec {
-		sound-dai = <&max98357a>;
+	    simple-audio-card,codec {
+			sound-dai = <&max98357a>;
 	    };
 	};
-	sound_inmp441: sound-inmp441 {
+	mic_inmp441: mic-inmp441 {
 	    compatible = "simple-audio-card";
 	    simple-audio-card,name = "stm32mp1-inmp441";
 	    simple-audio-card,format = "i2s";
@@ -90,8 +90,8 @@
 		sound-dai = <&sai2b>;
 	    };
  
-	    dai_codec_in: simple-audio-card,codec {
-		sound-dai = <&inmp441>;
+	    simple-audio-card,codec {
+			sound-dai = <&inmp441>;
 	    };
 	};
 	sai2 {
@@ -101,17 +101,40 @@
 	    assigned-clock-rates = <12288000>;        /* 12.288 MHz for 48k family (256×Fs) */
 	    status = "okay";
 	};
-	sai2a {
-		pinctrl-names = "default", "sleep";
-		pinctrl-0 = <&sai2a_pins>;
-		pinctrl-1 = <&sai2a_sleep_pins>;
-		status = "okay";
+	sai2a{
+    	compatible = "st,stm32-sai";
+    	reg = <0x4400b004 0x400>;
+		interrupt-parent = <&intc>;
+    	interrupts = <GIC_SPI 88 IRQ_TYPE_LEVEL_HIGH>;
+    	dmas = <&dmamux1 67 0x400 0x1>;
+    	dma-names = "rx";
+    	clocks = <&rcc SAI2>, <&rcc PLL3_Q>;
+    	clock-names = "sai_ck", "mclk";
+    	pinctrl-names = "default", "sleep";
+    	pinctrl-0 = <&sai2a_pins>;
+    	pinctrl-1 = <&sai2a_sleep_pins>;
+    	status = "okay";
+
+    	/* SAI2A is sync master */
+    	st,sync = <&sai2b 1>;
 	};
-	sai2b {
-		pinctrl-names = "default", "sleep";
-		pinctrl-0 = <&sai2b_pins>;
-		pinctrl-1 = <&sai2b_sleep_pins>;
-		status = "okay";
+
+	sai2b{
+    	compatible = "st,stm32-sai";
+    	reg = <0x4400b024 0x400>;
+		interrupt-parent = <&intc>;
+    	interrupts = <GIC_SPI 89 IRQ_TYPE_LEVEL_HIGH>;
+    	dmas = <&dmamux1 68 0x400 0x1>;
+    	dma-names = "tx";
+    	clocks = <&rcc SAI2>, <&rcc PLL3_Q>;
+    	clock-names = "sai_ck", "mclk";
+    	pinctrl-names = "default", "sleep";
+    	pinctrl-0 = <&sai2b_pins>;
+    	pinctrl-1 = <&sai2b_sleep_pins>;
+    	status = "okay";
+
+    	/* SAI2B is sync slave */
+    	st,sync = <&sai2a 0>;
 	};
 	pinctrl {
 	/*
@@ -150,21 +173,26 @@
 	 * PF11 = SAI2_SD_B  (SD IN to inmp411)
 	 */
 		sai2b_pins: sai2b-0 {
-			pins {
-				pinmux = <STM32_PINMUX('I', 5, AF10)>,
-						 <STM32_PINMUX('I', 7, AF10)>,
-						 <STM32_PINMUX('F', 11, AF10)>;
-				bias-disable;
-				drive-push-pull;
-				slew-rate = <0>;
+			pins1 {
+			pinmux = <STM32_PINMUX('E', 12, AF10)>, /* SAI2_SCK_B */
+				     <STM32_PINMUX('E', 13, AF10)>, /* SAI2_FS_B */
+				     <STM32_PINMUX('E', 14, AF10)>; /* SAI2_MCLK_B */
+			slew-rate = <0>;
+			drive-push-pull;
+			bias-disable;
+			};
+			pins2 {
+			pinmux = <STM32_PINMUX('F', 11, AF10)>; /* SAI2_SD_B */
+			bias-disable;
 			};
 		};
  
 		sai2b_sleep_pins: sai2b-1 {
 			pins {
-				pinmux = <STM32_PINMUX('I', 5, AF10)>,
-						 <STM32_PINMUX('I', 7, AF10)>,
-						 <STM32_PINMUX('F', 11, AF10)>;
+			pinmux = <STM32_PINMUX('F', 11, AF10)>, /* SAI2_SD_B */
+				     <STM32_PINMUX('E', 12, AF10)>, /* SAI2_SCK_B */
+				     <STM32_PINMUX('E', 13, AF10)>, /* SAI2_FS_B */
+				     <STM32_PINMUX('E', 14, AF10)>; /* SAI2_MCLK_B */
 			};
 		};
 	};
