@@ -4,6 +4,7 @@
  * @note Changelog:
  * - 19-08-2025: initial revision — Victor Martinez
  * - 20-08-2025: merged to a single soundcard audio-graph-card
+ * - 20-08-2025: added mh-i2s-mic to work with driver
 */
  
 /dts-v1/;
@@ -38,7 +39,7 @@
 	 * codec with control registers.
 	 * so "Use a dummy codec that doesn't do anything, just to satisfy the ASoC framework."*/
 	dummy_codec: dummy-codec {
-		compatible = "linux,snd-soc-dummy";
+		compatible = "mh-i2s-mic";
 		#sound-dai-cells = <0>;
 	};
 
@@ -56,7 +57,7 @@
 	};
 	/* INMP441 Codec node */
 	mic_codec: dummy-codec {
-		compatible = "linux,snd-soc-dummy";
+		compatible = "mh-i2s-mic";
     	#sound-dai-cells = <0>;
 		port {
 			mic_codec_endpoint: endpoint {
