@@ -1,5 +1,5 @@
 # Kernel module build
-obj-m += snd-soc-mh-i2s-mic.o
+obj-m := snd-soc-mh-i2s-mic.o
 
 KDIR := /lib/modules/$(shell uname -r)/build
 PWD := $(shell pwd)

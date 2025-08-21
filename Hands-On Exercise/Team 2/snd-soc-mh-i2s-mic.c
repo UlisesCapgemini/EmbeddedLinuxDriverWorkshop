@@ -25,8 +25,7 @@ MODULE_AUTHOR("Victor Martinez");
 MODULE_DESCRIPTION("mic driver  for INMP411");
 MODULE_VERSION("1.0");
 
-#include <linux/module.h>
-#include <sound/soc.h>
+
 
 static struct snd_soc_dai_driver mh_i2s_dai = {
     .name = "mh-i2s-mic",
@@ -72,6 +71,4 @@ static struct platform_driver mh_i2s_driver = {
 
 module_platform_driver(mh_i2s_driver);
 
-/*  Register init and exit functions */
-module_init(hello_init);
-module_exit(hello_exit);
+
