@@ -1,107 +1,187 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
+/*
+ * STM32MP157D-DK1 + MAX98357A on SAI2A +  INMP441 test
+ * @note Changelog:
+ * - 19-08-2025: initial revision — Victor Martinez
+ * - 20-08-2025: merged to a single soundcard audio-graph-card
+*/
+ 
 /dts-v1/;
-
+ 
+#include "stm32mp157.dtsi"
+#include "stm32mp15xd.dtsi"
+#include "stm32mp15-pinctrl.dtsi"
+#include "stm32mp15xxac-pinctrl.dtsi"
+#include "stm32mp15xx-dkx.dtsi"
+#include "stm32mp157a-dk1-scmi.dtsi"
+ 
 / {
-    model = "Basic Board";
-    compatible = "vendor,basic-board";
+	model = "STMicroelectronics STM32MP157D-DK1 Discovery Board (MAX98357A)";
+	compatible = "st,stm32mp157d-dk1", "st,stm32mp157";
+ 
+	aliases {
+		ethernet0 = &ethernet0;
+	};
+ 
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
+	sound {
+    	compatible = "audio-graph-card";
+    	label = "INMP411 + MAX98357A Audio";
+    	/*dais = <&sai2a_custom_endpoint>, <&sai2b_custom_endpoint>;*/
+    	dais = <&sai2a_victor_endpoint>, <&sai2b_victor_endpoint>;
+    	status = "okay";
+	};
     
-    #address-cells = <1>;
-    #size-cells = <1>;
-    
-    chosen {
-        bootargs = "console=ttyS0,115200 root=/dev/mmcblk0p2 rw";
-        stdout-path = &uart0;
-    };
-    
-    memory@80000000 {
-        device_type = "memory";
-        reg = <0x80000000 0x20000000>; // 512MB at 0x80000000
-    };
-    
-    cpus {
-        #address-cells = <1>;
-        #size-cells = <0>;
-        
-        cpu@0 {
-            device_type = "cpu";
-            compatible = "arm,cortex-a9";
-            reg = <0>;
-            clock-frequency = <800000000>; // 800MHz
-        };
-    };
-    
-    soc {
-        #address-cells = <1>;
-        #size-cells = <1>;
-        compatible = "simple-bus";
-        ranges;
-        
-        uart0: serial@12345000 {
-            compatible = "vendor,uart";
-            reg = <0x12345000 0x1000>;
-            interrupts = <0 10 4>;
-            clock-frequency = <24000000>;
-            status = "okay";
-        };
-        
-        gpio0: gpio@12346000 {
-            compatible = "vendor,gpio";
-            reg = <0x12346000 0x1000>;
-            gpio-controller;
-            #gpio-cells = <2>;
-            interrupts = <0 11 4>;
-            status = "okay";
-        };
-        
-        i2c0: i2c@12347000 {
-            compatible = "vendor,i2c";
-            reg = <0x12347000 0x1000>;
-            interrupts = <0 12 4>;
-            #address-cells = <1>;
-            #size-cells = <0>;
-            clock-frequency = <100000>;
-            status = "okay";
-            
-            // Example I2C device
-            eeprom@50 {
-                compatible = "atmel,24c02";
-                reg = <0x50>;
-            };
-        };
-        
-        spi0: spi@12348000 {
-            compatible = "vendor,spi";
-            reg = <0x12348000 0x1000>;
-            interrupts = <0 13 4>;
-            #address-cells = <1>;
-            #size-cells = <0>;
-            status = "okay";
-            
-            // Example SPI device
-            flash@0 {
-                compatible = "jedec,spi-nor";
-                reg = <0>;
-                spi-max-frequency = <25000000>;
-            };
-        };
-    };
-    
-    leds {
-        compatible = "gpio-leds";
-        
-        led0 {
-            label = "status";
-            gpios = <&gpio0 5 0>;
-            default-state = "on";
-        };
-    };
-    
-    buttons {
-        compatible = "gpio-keys";
-        
-        button0 {
-            label = "user-button";
-            gpios = <&gpio0 6 1>;
-            linux,code = <28>; // KEY_ENTER
-        };
-    };
+    /* The INMP411 microphone is a digital I2S microphone—it doesn't have a traditional
+	 * codec with control registers.
+	 * so "Use a dummy codec that doesn't do anything, just to satisfy the ASoC framework."*/
+	dummy_codec: dummy-codec {
+		compatible = "linux,snd-soc-dummy";
+		#sound-dai-cells = <0>;
+	};
+
+	/* Codec node: no control bus, just a DAI */
+	/* Updated to support sai2a and sai2b on same audio card as alsa prefer. */
+	max_codec: max98357a@0 {
+		    compatible = "maxim,max98357a";
+			#sound-dai-cells = <0>;
+			sdmode-gpios = <&gpioz 3 GPIO_ACTIVE_HIGH>;
+		port {
+				max_codec_endpoint: endpoint {
+             	remote-endpoint = <&sai2a_victor_endpoint>;
+        	};
+		};
+	};
+	/* INMP441 Codec node */
+	mic_codec: dummy-codec {
+		compatible = "linux,snd-soc-dummy";
+    	#sound-dai-cells = <0>;
+		port {
+			mic_codec_endpoint: endpoint {
+				remote-endpoint = <&sai2b_victor_endpoint>;
+			};
+		};
+	};
+
+ 
+	/*
+	 * A new sound card node with a unique name to avoid clashing
+	 * with any 'sound' node provided by included DK files.
+	 */
+	 /*node disabled for now audio-graph-card will be used */
+/*	sound_max98357a: sound-max98357a */
+/* mic_inmp441: mic-inmp441*/	
+	sai2 {
+		/*#address-cells = <2>;
+		#size-cells = <1>;*/
+	    /* Set a sane parent and rate SAI can derive BCLK/LRCLK from */
+	    assigned-clocks = <&rcc SAI2_K>;
+	    assigned-clock-parents = <&rcc PLL3_Q>;   /* or PLL3_R depending on tree */
+	    assigned-clock-rates = <12288000>;        /* 12.288 MHz for 48k family (256×Fs) */
+	    status = "okay";
+		/*sai2a*/
+		audio-controller@4400b004 {
+					#sound-dai-cells = <0>;
+					compatible = "st,stm32-sai-sub-a";
+					/*reg = <0x4 0x1c>; */
+					clocks = <&rcc SAI2_K>;
+					clock-names = "sai_ck";
+					pinctrl-names = "default", "sleep";
+					pinctrl-0 = <&sai2a_pins>;
+					pinctrl-1 = <&sai2a_sleep_pins>;
+					status = "okay";
+				
+				port {
+					sai2a_victor_endpoint: endpoint {
+					remote-endpoint = <&max_codec_endpoint>;
+					dai-format = "i2s";
+					bitclock-master = <&sai2a_victor_endpoint>;
+					frame-master = <&sai2a_victor_endpoint>;
+
+					// Optional: TDM and MCLK settings
+					mclk-fs = <256>;
+					dai-tdm-slot-num = <2>;
+					dai-tdm-slot-width = <32>;
+			
+					};
+				};
+			};
+			/*sai2b*/
+			audio-controller@4400b024 {
+						#sound-dai-cells = <0>;
+						compatible = "st,stm32-sai-sub-b";
+						/*reg = <0x24 0x1c>;*/
+						clocks = <&rcc SAI2_K>;
+						clock-names = "sai_ck";
+						pinctrl-names = "default", "sleep";
+						pinctrl-0 = <&sai2b_pins>;
+						pinctrl-1 = <&sai2b_sleep_pins>;
+						status = "okay";
+					
+					port {
+						sai2b_victor_endpoint: endpoint {
+					remote-endpoint = <&mic_codec_endpoint>;
+					dai-format = "i2s";
+					bitclock-master = <&sai2b_victor_endpoint>;
+					frame-master = <&sai2b_victor_endpoint>;
+
+							/* MCLK/Fs ratio used by the CPU DAI internally (even if MCLK pin not used) */
+							mclk-fs = <256>;
+
+							/* Optional, but helps some stacks */
+							dai-tdm-slot-num = <2>;
+							dai-tdm-slot-width = <32>;
+						};
+					};
+				};
+	}; /*todo check terminator*/
+	pinctrl {
+	/*
+	 * Pin mux for SAI2_A on Port X with mode (AF10).
+	 * Adjust only if your hardware uses different pads.
+	 *
+	 * PI5 = SAI2X_SCK_A (BCLK)
+	 * PI7 = SAI2X_FS_A  (LRCLK)
+	 * PI6 = SAI2_SD_A  (SD out to MAX98357A DIN)
+	 */
+		sai2a_pins: sai2a-0 {
+			pins {
+				pinmux = <STM32_PINMUX('I', 5, AF10)>,
+						 <STM32_PINMUX('I', 7, AF10)>,
+						 <STM32_PINMUX('I', 6, AF10)>;
+				bias-disable;
+				drive-push-pull;
+				slew-rate = <0>;
+			};
+		};
+ 
+		sai2a_sleep_pins: sai2a-1 {
+			pins {
+				pinmux = <STM32_PINMUX('I', 5, AF10)>,
+						 <STM32_PINMUX('I', 7, AF10)>,
+						 <STM32_PINMUX('I', 6, AF10)>;
+			};
+		};
+		/*Added pins on G  */
+		sai2b_pins: sai2b-0 {
+			pins {
+				pinmux = <STM32_PINMUX('G', 5, AF10)>,  /* SAI2B_SCK */
+						 <STM32_PINMUX('G', 7, AF10)>,  /* SAI2B_FS */
+						 <STM32_PINMUX('G', 10, AF10)>; /* SAI2B_SD */
+				bias-disable;
+				drive-push-pull;
+				slew-rate = <0>;
+			};
+		};
+
+		sai2b_sleep_pins: sai2b-1 {
+			pins {
+				pinmux = <STM32_PINMUX('G', 5, AF10)>,
+						 <STM32_PINMUX('G', 7, AF10)>,
+						 <STM32_PINMUX('G', 11, AF10)>;
+			};
+		};
+	};
 };
