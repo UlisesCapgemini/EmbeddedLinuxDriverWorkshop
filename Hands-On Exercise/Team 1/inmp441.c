@@ -21,64 +21,85 @@ struct inmp441_priv {
 };
 
 /*
- * Component probe callback
- * This is called by the ALSA SoC core when the codec is initialized
+ * PCM trigger callback
+ * Called by ALSA core on stream start/stop/resume/suspend
+ * Used here to control the SD_MODE GPIO if present
  */
-static int inmp441_probe(struct snd_soc_component *component)
+static int inmp441_trigger(struct snd_pcm_substream *substream,
+			   int cmd, struct snd_soc_dai *dai)
 {
+	struct snd_soc_component *component = dai->component;
 	struct inmp441_priv *inmp = snd_soc_component_get_drvdata(component);
 
-	// If the SD_MODE GPIO is defined, enable the microphone (set GPIO high)
-	if (inmp->sdmode_gpio)
-		gpiod_set_value_cansleep(inmp->sdmode_gpio, 1); // Power ON mic
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_START:
+	case SNDRV_PCM_TRIGGER_RESUME:
+	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		if (inmp->sdmode_gpio)
+			gpiod_set_value(inmp->sdmode_gpio, 1); // Power ON mic
+		break;
+	case SNDRV_PCM_TRIGGER_STOP:
+	case SNDRV_PCM_TRIGGER_SUSPEND:
+	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
+		if (inmp->sdmode_gpio)
+			gpiod_set_value(inmp->sdmode_gpio, 0); // Power OFF mic
+		break;
+	}
 
 	return 0;
 }
 
 /*
- * Component remove callback
- * Called when the codec is removed/unloaded (e.g., at shutdown or reboot)
+ * Digital Audio Interface (DAI) definition
+ * This describes the capabilities of the mic
  */
-static void inmp441_remove(struct snd_soc_component *component)
-{
-	struct inmp441_priv *inmp = snd_soc_component_get_drvdata(component);
+static const struct snd_soc_dai_ops inmp441_dai_ops = {
+	.trigger = inmp441_trigger, // Register trigger callback
+};
 
-	// If the SD_MODE GPIO is defined, disable the microphone (set GPIO low)
-	if (inmp->sdmode_gpio)
-		gpiod_set_value_cansleep(inmp->sdmode_gpio, 0); // Power OFF mic
-}
-
-/*
- * DAI (Digital Audio Interface) configuration
- * This defines the audio capture capabilities of the INMP441
- */
 static struct snd_soc_dai_driver inmp441_dai = {
-	.name = "invensense,inmp441", // DAI name, referenced by simple-audio-card
-
+	.name = "invensense,inmp441", // DAI name
 	.capture = {
-		.stream_name = "Capture",    // Name shown in ALSA
-		.channels_min = 1,           // INMP441 is mono
+		.stream_name = "Capture",    // Displayed in arecord -l
+		.channels_min = 1,           // Mono microphone
 		.channels_max = 1,
-		.rates = SNDRV_PCM_RATE_8000_48000, // Accepts 8kHz to 48kHz sampling rates
-		.formats = SNDRV_PCM_FMTBIT_S32_LE | // 32-bit PCM
-		           SNDRV_PCM_FMTBIT_S24_LE | // 24-bit PCM
-		           SNDRV_PCM_FMTBIT_S16_LE,  // 16-bit PCM
+		.rates = SNDRV_PCM_RATE_8000_48000, // Common sampling rates
+		.formats = SNDRV_PCM_FMTBIT_S16_LE | // Supported PCM formats
+		           SNDRV_PCM_FMTBIT_S24_LE |
+		           SNDRV_PCM_FMTBIT_S32_LE,
 	},
+	.ops = &inmp441_dai_ops, // DAI ops for trigger
 };
 
 /*
- * Minimal codec component driver
- * This does not include controls or widgets — it's a passive I2S source
+ * DAPM widget: virtual representation of mic input
+ */
+static const struct snd_soc_dapm_widget inmp441_dapm_widgets[] = {
+	SND_SOC_DAPM_INPUT("INMP441 Mic"),
+};
+
+/*
+ * DAPM route: Connect mic input to capture stream
+ */
+static const struct snd_soc_dapm_route inmp441_dapm_routes[] = {
+	{"Capture", NULL, "INMP441 Mic"},
+};
+
+/*
+ * ALSA codec component driver
+ * Provides DAPM info and ties everything together
  */
 static const struct snd_soc_component_driver soc_component_dev_inmp441 = {
-	.probe  = inmp441_probe,   // Called during codec init
-	.remove = inmp441_remove,  // Called during codec removal
-	.name   = "inmp441",       // Codec name shown in `arecord -l`
+	.name = "inmp441", // Shown in ALSA logs
+	.dapm_widgets = inmp441_dapm_widgets,
+	.num_dapm_widgets = ARRAY_SIZE(inmp441_dapm_widgets),
+	.dapm_routes = inmp441_dapm_routes,
+	.num_dapm_routes = ARRAY_SIZE(inmp441_dapm_routes),
 };
 
 /*
- * Platform driver probe
- * Called when a matching Device Tree node is found (e.g., compatible = "invensense,inmp441")
+ * Platform probe function
+ * Called when Device Tree node is matched
  */
 static int inmp441_platform_probe(struct platform_device *pdev)
 {
@@ -129,26 +150,9 @@ static struct platform_driver inmp441_driver = {
 	.probe = inmp441_platform_probe, // Called when DT match occurs
 };
 
-// static const struct snd_soc_dapm_widget inmp441_dapm_widgets[] = {
-//     SND_SOC_DAPM_MIC("MIC1", NULL),
-//     SND_SOC_DAPM_INPUT("Mic Jack"),
-//     SND_SOC_DAPM_SUPPLY("Mic Bias", NULL, 0, NULL, 0),
-// };
-
-// static const struct snd_soc_dapm_route inmp441_dapm_routes[] = {
-//     {"MIC1", NULL, "Mic Jack"},
-//     {"Mic Bias", NULL, "Mic Jack"},
-// };
-
-// static struct snd_soc_component_driver soc_codec_dev_inmp441 = {
-//     .dapm_widgets = inmp441_dapm_widgets,
-//     .num_dapm_widgets = ARRAY_SIZE(inmp441_dapm_widgets),
-//     .dapm_routes = inmp441_dapm_routes,
-//     .num_dapm_routes = ARRAY_SIZE(inmp441_dapm_routes),
-//     // ...existing code...
-// };
-
-// This macro sets up init and exit routines automatically
+/*
+ * Register init/exit routines for kernel module
+ */
 module_platform_driver(inmp441_driver);
 
 // Metadata for modinfo
