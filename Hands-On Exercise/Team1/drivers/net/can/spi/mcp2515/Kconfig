@@ -1,0 +1,6 @@
+# Kconfig for mcp2515 driver
+config MCP2515
+	tristate "Microchip MCP2515 CAN controller"
+	depends on SPI && CAN
+	help
+	  This driver supports the Microchip MCP2515 CAN controller.
