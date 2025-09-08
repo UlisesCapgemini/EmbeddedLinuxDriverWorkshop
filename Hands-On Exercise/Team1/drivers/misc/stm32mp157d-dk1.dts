@@ -1,0 +1,127 @@
+// SPDX-License-Identifier: (GPL-2.0-only OR BSD-3-Clause)
+/*
+ * STM32MP157D-DK1 with MCP2515 SPI CAN Transceiver on SPI5 - test
+ */
+/dts-v1/;
+#include "stm32mp157.dtsi"
+#include "stm32mp15xd.dtsi"
+#include "stm32mp15-pinctrl.dtsi"
+#include "stm32mp15xxac-pinctrl.dtsi"
+#include "stm32mp15xx-dkx.dtsi"
+#include "stm32mp157a-dk1-scmi.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+
+/ {
+    model = "STMicroelectronics STM32MP157D-DK1 Discovery Board with MCP2515";
+    compatible = "st,stm32mp157d-dk1", "st,stm32mp157";
+
+    aliases {
+        ethernet0 = &ethernet0;
+        can0 = &can0;
+    };
+
+    chosen {
+        stdout-path = "serial0:115200n8";
+    };
+    sound {
+        status = "disabled";
+    };
+
+    can0_osc: can0-osc {
+        compatible = "fixed-clock";
+        #clock-cells = <0>;
+        clock-frequency = <8000000>;
+    };
+};
+
+&adc {
+    status = "disabled";
+};
+
+/* Override any existing SPI5 configuration */
+&spi5 {
+    #address-cells = <1>;
+    #size-cells = <0>;
+    pinctrl-names = "default", "sleep";
+    pinctrl-0 = <&spi5_pins_a>;
+    pinctrl-1 = <&spi5_sleep_pins_a>;
+    cs-gpios = <&gpiof 6 GPIO_ACTIVE_LOW>;
+    status = "okay";
+
+    can0: can0@0 {
+        compatible = "microchip,mcp2515";
+        reg = <0>;
+        spi-max-frequency = <10000000>;
+        clocks = <&can0_osc>;
+        interrupt-parent = <&gpiof>;
+        interrupts = <4 IRQ_TYPE_EDGE_FALLING>;
+        pinctrl-names = "default";
+        pinctrl-0 = <&mcp2515_int_pins>;
+        status = "okay";
+    };
+};
+
+/* Pin configuration for SPI5 and MCP2515 */
+&pinctrl {
+    /* SPI5 pin configuration */
+    spi5_pins_a: spi5-0  {
+        pins1 {
+            pinmux = <STM32_PINMUX('F', 7, AF5)>,
+                     <STM32_PINMUX('F', 9, AF5)>;
+            bias-disable;
+            drive-push-pull;
+            slew-rate = <1>;
+        };
+        pins2 {
+            pinmux = <STM32_PINMUX('F', 8, AF5)>;
+            bias-disable;
+        };
+    };
+
+    spi5_sleep_pins_a: spi5-sleep-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 6, ANALOG)>,
+                     <STM32_PINMUX('F', 7, ANALOG)>,
+                     <STM32_PINMUX('F', 8, ANALOG)>,
+                     <STM32_PINMUX('F', 9, ANALOG)>;
+        };
+    };
+
+    /* MCP2515 interrupt pin configuration */
+    mcp2515_int_pins: mcp2515_int_mx-0 {
+        pins {
+            pinmux = <STM32_PINMUX('F', 4, GPIO)>;
+            bias-pull-up;
+            drive-open-drain;
+            slew-rate = <0>;
+        };
+    };
+};
+
+/* Apply pinmux to the GPIO controller */
+&gpiof {
+    pinctrl-names = "default";
+    pinctrl-0 = <&mcp2515_int_pins>;
+};
+
+&exti {
+    status = "okay";
+};
+
+/* Ensure any conflicting SPI configurations are disabled */
+&spi1 {
+    status = "disabled";
+};
+
+&spi2 {
+    status = "disabled";
+};
+
+&spi3 {
+    status = "disabled";
+};
+
+&spi4 {
+    status = "disabled";
+};
