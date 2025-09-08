@@ -1,0 +1,25 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/28.0.6 Chrome/138.0.7204.100 Electron/37.2.3 Safari/537.36" version="28.0.6">
+  <diagram name="Page-1" id="3GCTSor4pwCZlluzu9vD">
+    <mxGraphModel dx="1188" dy="701" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="28Ts2UZMv-MZD58YApAm-1" value="Qualcomm QAM8775" style="shape=folder;tabWidth=80;tabHeight=20;tabPosition=left;strokeWidth=2;html=1;whiteSpace=wrap;align=center;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+          <mxGeometry x="110" y="698" width="580" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="28Ts2UZMv-MZD58YApAm-2" value="SPI/GPIO Subsystem&lt;div&gt;/include/linux&lt;/div&gt;" style="shape=folder;tabWidth=80;tabHeight=20;tabPosition=left;strokeWidth=2;html=1;whiteSpace=wrap;align=center;fillColor=#ffe6cc;strokeColor=#d79b00;" parent="1" vertex="1">
+          <mxGeometry x="110" y="538" width="580" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="28Ts2UZMv-MZD58YApAm-3" value="MCP2515 Driver" style="shape=folder;tabWidth=80;tabHeight=20;tabPosition=left;strokeWidth=2;html=1;whiteSpace=wrap;align=center;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
+          <mxGeometry x="110" y="377" width="580" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="28Ts2UZMv-MZD58YApAm-4" value="MCP2515 API (&lt;font style=&quot;color: rgb(255, 51, 51);&quot;&gt;can-utils?&lt;/font&gt;) (alsa)&lt;div&gt;&lt;br&gt;&lt;/div&gt;&lt;div&gt;compiled as shared library (.so)&lt;/div&gt;" style="shape=folder;tabWidth=80;tabHeight=20;tabPosition=left;strokeWidth=2;html=1;whiteSpace=wrap;align=center;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
+          <mxGeometry x="110" y="204" width="580" height="120" as="geometry" />
+        </mxCell>
+        <mxCell id="28Ts2UZMv-MZD58YApAm-5" value="MCP2515 Application (VALEO)" style="shape=folder;tabWidth=80;tabHeight=20;tabPosition=left;strokeWidth=2;html=1;whiteSpace=wrap;align=center;fillColor=#e1d5e7;strokeColor=#9673a6;" parent="1" vertex="1">
+          <mxGeometry x="110" y="24" width="580" height="120" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
