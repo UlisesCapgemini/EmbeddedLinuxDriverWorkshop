@@ -24,10 +24,10 @@ Virtio es efectivamente un excelente punto de partida, ya que es el estándar de
 # Explorar módulos virtio en tu sistema
 lsmod | grep virtio
 
-# Ver documentación del kernel sobre virtio
+# Documentación del kernel sobre virtio
 less /usr/src/linux-headers-$(uname -r)/Documentation/virtual/virtio-spec.txt
 Pasos de Aprendizaje con Virtio:
-1.	Estudiar la arquitectura Virtio:
+1.	Estudiar la arquitectura Virtio: vease readme en folder virtio 
 o	Entender el modelo frontend/backend
 o	Familiarizarse con los anillos de virtio (virtqueues)
 2.	Examinar drivers existentes:
