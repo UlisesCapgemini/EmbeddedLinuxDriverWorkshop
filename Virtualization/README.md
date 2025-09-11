@@ -4,9 +4,12 @@ Colaboradores: Victor M
 Este repositorio se compone de las siguientes secciones para aprender virtualizacion
 # Nivel 0:
 # Fundamentos de programacion user space en Linux
-•	En este repositorio encontraras la seccion APP con ejemplos de uso de pthreads, directivas de sincronizacion, etc
-•	En el folder drivers encontraras ejemplos de drivers para targets como STM32MP157d y QUEMU
-•	En el folder Virtio encontraras ejemplos de virtio para targets como STM32MP157d y QUEMU
+•	En este repositorio encontraras la seccion APP con ejemplos de uso de pthreads, directivas de sincronizacion, etc.
+
+•	En el folder drivers encontraras ejemplos de drivers para targets como STM32MP157d y QEMU
+
+•	En el folder Virtio encontraras ejemplos de virtio para targets como STM32MP157d y QEMU
+
 # Nivel 1:
 TBD
 
