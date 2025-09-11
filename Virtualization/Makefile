@@ -14,8 +14,8 @@ DESTDIR ?= $(KERNEL_SRC_PATH)/install_artifact
 PWD := $(shell pwd)
 
 # User-space app build
-APP_NAME := drv8889_cli.c #capgeminiSound
-SRC := App/$(APP_NAME) #capgeminiSound.c
+APP_NAME := excercise2
+SRC := App/$(APP_NAME).c
 BUILD_DIR := build
 LDFLAGS := -lasound
 
