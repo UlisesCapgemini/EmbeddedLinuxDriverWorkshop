@@ -47,10 +47,11 @@ cat > run_stm32mp1_virtio.sh << 'EOF'
 #!/bin/bash
 
 # Rutas a los archivos necesarios - AJUSTA ESTAS RUTAS según tu entorno
-KERNEL="/path/to/your/zImage"
-DTB="/path/to/your/stm32mp157d-dk1.dtb"
-ROOTFS="/path/to/your/rootfs.ext4"
+KERNEL="~/stm32mp-openstlinux-6.6-yocto-scarthgap-mpu-v25.06.11/sources/ostl-linux/linux-stm32mp-6.6.78-stm32mp-r2-r0/build/arch/arm/boot/zImage"
+DTB="~/stm32mp-openstlinux-6.6-yocto-scarthgap-mpu-v25.06.11/sources/ostl-linux/linux-stm32mp-6.6.78-stm32mp-r2-r0/build/arch/arm/boot/dts/st/stm32mp157d-dk1.dtb"
+ROOTFS="~/stm32mp-openstlinux-6.6-yocto-scarthgap-mpu-v25.06.11/build/tmp-glibc/deploy/images/stm32mp157d-dk1/rootfs.ext4"
 DTBO="./stm32mp157d-virtio-overlay.dtbo"
+
 
 # Crear un disco virtual para pruebas con virtio-blk
 if [ ! -f virtio-disk.qcow2 ]; then
