@@ -14,8 +14,8 @@ DESTDIR ?= $(KERNEL_SRC_PATH)/install_artifact
 PWD := $(shell pwd)
 
 # User-space app build
-APP_NAME := cacheperformance_1
-SRC := $(APP_NAME).c
+
+SRC_FILES := cacheperformance_1.c numa_test.c
 BUILD_DIR := ../build
 LDFLAGS :=
 
@@ -35,10 +35,13 @@ app_desktop:
 	mkdir -p $(BUILD_DIR)
 	gcc -Wall $(SRC) -o $(BUILD_DIR)/$(APP_NAME) $(LDFLAGS)
 # Build user-space app for STM32MP1 (requires SDK environment sourced)
+
 app_st:
 	mkdir -p $(BUILD_DIR)
-	$(CC) -Wall $(SRC) -o $(BUILD_DIR)/$(APP_NAME)_st $(LDFLAGS)
-
+	@for src in $(SRC_FILES); do \
+		name=$$(basename $$src .c); \
+		$(CC) -Wall $$src -o $(BUILD_DIR)/$${name}_st $(LDFLAGS); \
+	done
 
 install:
 # sudo insmod hello.ko
