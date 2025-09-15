@@ -1,0 +1,35 @@
+/dts-v1/;
+/plugin/;
+
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+
+/ {
+    compatible = "st,stm32mp157d-dk1", "st,stm32mp157";
+    
+    fragment@0 {
+        target = <&soc>;
+        __overlay__ {
+            /* Definimos explícitamente #address-cells y #size-cells para que coincidan con el DTB base */
+            #address-cells = <2>;
+            #size-cells = <1>;
+            
+            virtio_mmio@10100000 {
+                compatible = "virtio,mmio";
+                /* Formato correcto para reg con #address-cells = <2> y #size-cells = <1> */
+                reg = <0x0 0x10100000 0x1000>;
+                interrupt-parent = <&intc>;
+                interrupts = <GIC_SPI 42 IRQ_TYPE_LEVEL_HIGH>;
+                status = "okay";
+            };
+            
+            virtio_mmio@10101000 {
+                compatible = "virtio,mmio";
+                /* Formato correcto para reg con #address-cells = <2> y #size-cells = <1> */
+                reg = <0x0 0x10101000 0x1000>;
+                interrupt-parent = <&intc>;
+                interrupts = <GIC_SPI 43 IRQ_TYPE_LEVEL_HIGH>;
+                status = "okay";
+            };
+        };
+    };
+};
