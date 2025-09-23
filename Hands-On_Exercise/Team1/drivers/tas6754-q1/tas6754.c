@@ -28,10 +28,11 @@
 /* Define how often to check (and clear) the fault status register (in ms) */
 #define TAS6754_FAULT_CHECK_INTERVAL 200
 
+/* Order of array elements for supplies follows power-down sequence from datasheet, which is recommended to disable PVDD and VBAT first, then DVDD */
 static const char * const tas6754_supply_names[] = {
-	"dvdd", /* Digital power supply. Connect to 3.3-V supply. */
-	"vbat", /* Supply used for higher voltage analog circuits. */
-	"pvdd", /* Class-D amp output FETs supply. */
+    "pvdd", /* Class-D amp output FETs supply. */
+    "vbat", /* Supply used for higher voltage analog circuits. */
+    "dvdd", /* Digital power supply. Connect to 3.3-V supply. */
 };
 #define TAS6754_NUM_SUPPLIES ARRAY_SIZE(tas6754_supply_names)
 
@@ -40,12 +41,15 @@ struct tas6754_data {
 	struct regmap *regmap;
 	struct regulator_bulk_data supplies[TAS6754_NUM_SUPPLIES];
 	struct delayed_work fault_check_work;
-	unsigned int last_cfault;
-	unsigned int last_fault1;
-	unsigned int last_fault2;
-	unsigned int last_warn;
-	struct gpio_desc *standby_gpio;
-	struct gpio_desc *mute_gpio;
+	unsigned int last_oc_dc_fault;//last_cfault
+	unsigned int last_power_fault;//last_fault1;
+	unsigned int last_ot_fault;//last_fault2;
+	unsigned int last_cbc_fault_warn;//last_warn;
+	unsigned int last_rtldg_ol_sl_fault;
+	struct gpio_desc *pd_gpio;
+    struct gpio_desc *stby_gpio;
+	//struct gpio_desc *standby_gpio;
+	//struct gpio_desc *mute_gpio;
 };
 
 /*
@@ -81,9 +85,11 @@ static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
 		msleep(12);
 
 		/* Turn on TAS6754 periodic fault checking/handling */
-		tas6754->last_fault1 = 0;
-		tas6754->last_fault2 = 0;
-		tas6754->last_warn = 0;
+		tas6754->last_oc_dc_fault = 0;
+		tas6754->last_power_fault = 0;
+		tas6754->last_ot_fault = 0;
+		tas6754->last_cbc_fault_warn = 0;
+		tas6754->last_rtldg_ol_sl_fault = 0;
 		schedule_delayed_work(&tas6754->fault_check_work,
 				      msecs_to_jiffies(TAS6754_FAULT_CHECK_INTERVAL));
 	} else if (event & SND_SOC_DAPM_PRE_PMD) {
@@ -363,23 +369,77 @@ static int tas6754_mute(struct snd_soc_dai *dai, int mute, int direction)
 	return 0;
 }
 
+
+/**
+ * Power-Down Sequence
+ * @brief To power-down the device, first set the STBY pin or PD pin low for at least 10ms before removing PVDD, VBAT 
+ * or DVDD. After 10ms, the power supplies can be removed. Removing PVDD and VBAT first is recommended 
+ * before removing the DVDD supply. 
+ */
 static int tas6754_power_off(struct snd_soc_component *component)
 {
 	struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
 	int ret;
 
-	snd_soc_component_write(component, TAS6754_CH_STATE_CTRL, TAS6754_ALL_STATE_HIZ);
+	//dev_dbg(component->dev, "%s: Powering off TAS6754\n", __func__);
 
+	/* Put all channels in HiZ state to prevent pops/click, effectively disconnecting outputs for safety.*/
+	snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_STATE_HIZ);
+	snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_STATE_HIZ);
+
+	/* Switch regmap to cache-only mode to preserve settings */
 	regcache_cache_only(tas6754->regmap, true);
 	regcache_mark_dirty(tas6754->regmap);
 
-	ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies),
-				     tas6754->supplies);
+	/* Put device in standby (DEEP SLEEP mode) */
+	if (tas6754->stby_gpio){
+		gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
+	}
+	else{
+		/* If no GPIO, use fallback to state control register for setting standby (DEEP SLEEP mode)*/
+		snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, 
+							TAS6754_STATE_CTRL_CH1_CH2_STATE_DEEP_SLEEP);
+		snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, 
+							TAS6754_STATE_CTRL_CH3_CH4_STATE_DEEP_SLEEP);
+
+	}
+
+	/* Wait at least 10ms before removing power supplies as per datasheet */
+	msleep(10);
+
+	/* For complete shutdown, assert PD pin
+     * This will reset all registers on next power-up */
+	if (tas6754->pd_gpio){
+		gpiod_set_value_cansleep(tas6754->pd_gpio, 0);
+	}
+
+	/*
+	TODO[DTS]: 	To ensure regulators are disabled in the correct sequence (PVDD and VBAT first, then DVDD),
+				you should define them in the correct order in your device structure and device tree.
+				The Linux regulator framework will disable them in reverse order of enabling.
+	Example device tree snippet:			
+	tas6754: audio-codec@70 {
+    compatible = "ti,tas6754";
+    reg = <0x70>;
+    
+    pvdd-supply = <&reg_audio_pvdd>;
+    vbat-supply = <&reg_audio_vbat>;
+    dvdd-supply = <&reg_audio_dvdd>;
+    
+    pd-gpio = <&gpio1 15 GPIO_ACTIVE_HIGH>;
+    stby-gpio = <&gpio1 16 GPIO_ACTIVE_HIGH>;
+    // other properties 
+	};*/
+	
+
+	/* Disable all regulators in the recommended sequence. PVDD -> VBAT -> DVDD */
+	ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
 	if (ret < 0) {
 		dev_err(component->dev, "failed to disable supplies: %d\n", ret);
 		return ret;
 	}
 
+	//dev_dbg(component->dev, "%s: TAS6754 powered off\n", __func__);
 	return 0;
 }
 
@@ -391,11 +451,12 @@ static int tas6754_power_on(struct snd_soc_component *component)
 	int no_auto_diags = 0;
 	unsigned int reg_val;
 
-	if (!regmap_read(tas6754->regmap, TAS6754_DC_DIAG_CTRL1, &reg_val))
-		no_auto_diags = reg_val & TAS6754_LDGBYPASS_MASK;
+	
+	if (!regmap_read(tas6754->regmap, TAS6754_DC_LDG_CTRL, &reg_val))
+		no_auto_diags = reg_val & TAS6754_DC_LDG_BYPASS_MASK;
 
-	ret = regulator_bulk_enable(ARRAY_SIZE(tas6754->supplies),
-				    tas6754->supplies);
+
+	ret = regulator_bulk_enable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
 	if (ret < 0) {
 		dev_err(component->dev, "failed to enable supplies: %d\n", ret);
 		return ret;
@@ -432,8 +493,7 @@ static int tas6754_power_on(struct snd_soc_component *component)
 	return 0;
 }
 
-static int tas6754_set_bias_level(struct snd_soc_component *component,
-				  enum snd_soc_bias_level level)
+static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_soc_bias_level level)
 {
 	dev_dbg(component->dev, "%s() level=%d\n", __func__, level);
 
@@ -455,7 +515,7 @@ static int tas6754_set_bias_level(struct snd_soc_component *component,
 
 static struct snd_soc_component_driver soc_codec_dev_tas6754 = {
 	.set_bias_level		= tas6754_set_bias_level,
-	.controls		= tas6754_snd_controls,
+	.controls			= tas6754_snd_controls,
 	.num_controls		= ARRAY_SIZE(tas6754_snd_controls),
 	.dapm_widgets		= tas6754_dapm_widgets,
 	.num_dapm_widgets	= ARRAY_SIZE(tas6754_dapm_widgets),
@@ -489,238 +549,390 @@ static struct snd_soc_dai_driver tas6754_dai[] = {
 
 static void tas6754_fault_check_work(struct work_struct *work)
 {
-	struct tas6754_data *tas6754 = container_of(work, struct tas6754_data,
-						    fault_check_work.work);
+	struct tas6754_data *tas6754 = container_of(work, struct tas6754_data, fault_check_work.work);
 	struct device *dev = tas6754->dev;
 	unsigned int reg;
 	int ret;
 
-	ret = regmap_read(tas6754->regmap, TAS6754_CHANNEL_FAULT, &reg);
+	ret = regmap_read(tas6754->regmap, TAS6754_OC_DC_FAULT_LATCHED, &reg);
 	if (ret < 0) {
-		dev_err(dev, "failed to read CHANNEL_FAULT register: %d\n", ret);
+		dev_err(dev, "failed to read OC_DC_FAULT_LATCHED register: %d\n", ret);
 		goto out;
 	}
 
 	if (!reg) {
-		tas6754->last_cfault = reg;
-		goto check_global_fault1_reg;
+		/* No fault detected */
+		tas6754->last_oc_dc_fault = reg;
+		goto check_power_fault_latched_reg;
 	}
 
-	/*
-	 * Only flag errors once for a given occurrence. This is needed as
-	 * the TAS6754 will take time clearing the fault condition internally
-	 * during which we don't want to bombard the system with the same
-	 * error message over and over.
-	 */
-	if ((reg & TAS6754_FAULT_OC_CH1) && !(tas6754->last_cfault & TAS6754_FAULT_OC_CH1))
+	/* Check if any Over Current (OC) or Direct Current (DC) fault is currently active and was not active in the previous reading */
+	if ((reg & TAS6754_OC_FAULT_CH1_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_OC_FAULT_CH1_MASK))
 		dev_crit(dev, "experienced a channel 1 overcurrent fault\n");
 
-	if ((reg & TAS6754_FAULT_OC_CH2) && !(tas6754->last_cfault & TAS6754_FAULT_OC_CH2))
+	if ((reg & TAS6754_OC_FAULT_CH2_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_OC_FAULT_CH2_MASK))
 		dev_crit(dev, "experienced a channel 2 overcurrent fault\n");
 
-	if ((reg & TAS6754_FAULT_OC_CH3) && !(tas6754->last_cfault & TAS6754_FAULT_OC_CH3))
+	if ((reg & TAS6754_OC_FAULT_CH3_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_OC_FAULT_CH3_MASK))
 		dev_crit(dev, "experienced a channel 3 overcurrent fault\n");
 
-	if ((reg & TAS6754_FAULT_OC_CH4) && !(tas6754->last_cfault & TAS6754_FAULT_OC_CH4))
+	if ((reg & TAS6754_OC_FAULT_CH4_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_OC_FAULT_CH4_MASK))
 		dev_crit(dev, "experienced a channel 4 overcurrent fault\n");
 
-	if ((reg & TAS6754_FAULT_DC_CH1) && !(tas6754->last_cfault & TAS6754_FAULT_DC_CH1))
+	if ((reg & TAS6754_DC_FAULT_CH1_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_DC_FAULT_CH1_MASK))
 		dev_crit(dev, "experienced a channel 1 DC fault\n");
 
-	if ((reg & TAS6754_FAULT_DC_CH2) && !(tas6754->last_cfault & TAS6754_FAULT_DC_CH2))
+	if ((reg & TAS6754_DC_FAULT_CH2_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_DC_FAULT_CH2_MASK))
 		dev_crit(dev, "experienced a channel 2 DC fault\n");
 
-	if ((reg & TAS6754_FAULT_DC_CH3) && !(tas6754->last_cfault & TAS6754_FAULT_DC_CH3))
+	if ((reg & TAS6754_DC_FAULT_CH3_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_DC_FAULT_CH3_MASK))
 		dev_crit(dev, "experienced a channel 3 DC fault\n");
 
-	if ((reg & TAS6754_FAULT_DC_CH4) && !(tas6754->last_cfault & TAS6754_FAULT_DC_CH4))
+	if ((reg & TAS6754_DC_FAULT_CH4_MASK) && !(tas6754->last_oc_dc_fault & TAS6754_DC_FAULT_CH4_MASK))
 		dev_crit(dev, "experienced a channel 4 DC fault\n");
 
-	/* Store current fault1 value so we can detect any changes next time */
-	tas6754->last_cfault = reg;
+	/* Store current Over Current (OC) or Direct Current (DC) fault value so we can detect any changes next time */
+	tas6754->last_oc_dc_fault = reg;
 
-check_global_fault1_reg:
-	ret = regmap_read(tas6754->regmap, TAS6754_GLOB_FAULT1, &reg);
+check_power_fault_latched_reg:
+	ret = regmap_read(tas6754->regmap, TAS6754_POWER_FAULT_LATCHED, &reg);
 	if (ret < 0) {
-		dev_err(dev, "failed to read GLOB_FAULT1 register: %d\n", ret);
+		dev_err(dev, "failed to read POWER_FAULT_LATCHED register: %d\n", ret);
 		goto out;
 	}
 
-	/*
-	 * Ignore any clock faults as there is no clean way to check for them.
-	 * We would need to start checking for those faults *after* the SAIF
-	 * stream has been setup, and stop checking *before* the stream is
-	 * stopped to avoid any false-positives. However there are no
-	 * appropriate hooks to monitor these events.
-	 */
-	reg &= TAS6754_FAULT_PVDD_OV |
-	       TAS6754_FAULT_VBAT_OV |
-	       TAS6754_FAULT_PVDD_UV |
-	       TAS6754_FAULT_VBAT_UV;
+	reg &= TAS6754_POWER_FAULT_LATCHED_DVDD_POR_MASK |
+		   TAS6754_POWER_FAULT_LATCHED_DVDD_UV_MASK |
+	  	   TAS6754_POWER_FAULT_LATCHED_PVDD_OV_MASK |
+		   TAS6754_POWER_FAULT_LATCHED_VBAT_OV_MASK |
+	  	   TAS6754_POWER_FAULT_LATCHED_PVDD_UV_MASK |
+		   TAS6754_POWER_FAULT_LATCHED_VBAT_UV_MASK;
 
 	if (!reg) {
-		tas6754->last_fault1 = reg;
-		goto check_global_fault2_reg;
+		/* No fault detected */
+		tas6754->last_power_fault = reg;
+		goto check_ot_fault_reg;
 	}
 
-	if ((reg & TAS6754_FAULT_PVDD_OV) && !(tas6754->last_fault1 & TAS6754_FAULT_PVDD_OV))
-		dev_crit(dev, "experienced a PVDD overvoltage fault\n");
+	/* Check if any power fault is currently active and was not active in the previous reading */
+	if ((reg & TAS6754_POWER_FAULT_LATCHED_DVDD_POR_MASK) && !(tas6754->last_power_fault & TAS6754_POWER_FAULT_LATCHED_DVDD_POR_MASK))
+		dev_crit(dev, "experienced a DVDD power on reset fault\n");
 
-	if ((reg & TAS6754_FAULT_VBAT_OV) && !(tas6754->last_fault1 & TAS6754_FAULT_VBAT_OV))
-		dev_crit(dev, "experienced a VBAT overvoltage fault\n");
+	if ((reg & TAS6754_POWER_FAULT_LATCHED_DVDD_UV_MASK) && !(tas6754->last_power_fault & TAS6754_POWER_FAULT_LATCHED_DVDD_UV_MASK))
+		dev_crit(dev, "experienced a DVDD under voltage fault\n");
 
-	if ((reg & TAS6754_FAULT_PVDD_UV) && !(tas6754->last_fault1 & TAS6754_FAULT_PVDD_UV))
-		dev_crit(dev, "experienced a PVDD undervoltage fault\n");
+	if ((reg & TAS6754_POWER_FAULT_LATCHED_PVDD_OV_MASK) && !(tas6754->last_power_fault & TAS6754_POWER_FAULT_LATCHED_PVDD_OV_MASK))
+		dev_crit(dev, "experienced a PVDD over voltage fault\n");
 
-	if ((reg & TAS6754_FAULT_VBAT_UV) && !(tas6754->last_fault1 & TAS6754_FAULT_VBAT_UV))
-		dev_crit(dev, "experienced a VBAT undervoltage fault\n");
+	if ((reg & TAS6754_POWER_FAULT_LATCHED_VBAT_OV_MASK) && !(tas6754->last_power_fault & TAS6754_POWER_FAULT_LATCHED_VBAT_OV_MASK))
+		dev_crit(dev, "experienced a VBAT over voltage fault\n");
 
-	/* Store current fault1 value so we can detect any changes next time */
-	tas6754->last_fault1 = reg;
+	if ((reg & TAS6754_POWER_FAULT_LATCHED_PVDD_UV_MASK) && !(tas6754->last_power_fault & TAS6754_POWER_FAULT_LATCHED_PVDD_UV_MASK))
+		dev_crit(dev, "experienced a PVDD under voltage fault\n");
 
-check_global_fault2_reg:
-	ret = regmap_read(tas6754->regmap, TAS6754_GLOB_FAULT2, &reg);
+	if ((reg & TAS6754_POWER_FAULT_LATCHED_VBAT_UV_MASK) && !(tas6754->last_power_fault & TAS6754_POWER_FAULT_LATCHED_VBAT_UV_MASK))
+		dev_crit(dev, "experienced a VBAT under voltage fault\n");
+
+	/* Store current power fault value so we can detect any changes next time */
+	tas6754->last_power_fault = reg;
+
+check_ot_fault_reg:
+	ret = regmap_read(tas6754->regmap, TAS6754_OT_FAULT, &reg);
 	if (ret < 0) {
-		dev_err(dev, "failed to read GLOB_FAULT2 register: %d\n", ret);
+		dev_err(dev, "failed to read OT_FAULT register: %d\n", ret);
 		goto out;
 	}
-
-	reg &= TAS6754_FAULT_OTSD |
-	       TAS6754_FAULT_OTSD_CH1 |
-	       TAS6754_FAULT_OTSD_CH2 |
-	       TAS6754_FAULT_OTSD_CH3 |
-	       TAS6754_FAULT_OTSD_CH4;
 
 	if (!reg) {
-		tas6754->last_fault2 = reg;
-		goto check_warn_reg;
+		/* No fault detected */
+		tas6754->last_ot_fault = reg;
+		goto check_cbc_fault_warn_reg;
 	}
 
-	if ((reg & TAS6754_FAULT_OTSD) && !(tas6754->last_fault2 & TAS6754_FAULT_OTSD))
-		dev_crit(dev, "experienced a global overtemp shutdown\n");
+	/* Check if any Over Temperature (OT) fault is currently active and was not active in the previous reading */
+	if ((reg & TAS6754_OT_FAULT_GLOBAL_WARNING_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_GLOBAL_WARNING_MASK))
+		dev_crit(dev, "experienced a global warning\n");
 
-	if ((reg & TAS6754_FAULT_OTSD_CH1) && !(tas6754->last_fault2 & TAS6754_FAULT_OTSD_CH1))
-		dev_crit(dev, "experienced an overtemp shutdown on CH1\n");
+	if ((reg & TAS6754_OT_FAULT_GLOBAL_FAULT_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_GLOBAL_FAULT_MASK))
+		dev_crit(dev, "experienced a global fault\n");
 
-	if ((reg & TAS6754_FAULT_OTSD_CH2) && !(tas6754->last_fault2 & TAS6754_FAULT_OTSD_CH2))
-		dev_crit(dev, "experienced an overtemp shutdown on CH2\n");
+	if ((reg & TAS6754_OT_FAULT_CP_FAULT_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_CP_FAULT_MASK))
+		dev_crit(dev, "experienced a charge pump fault\n");
 
-	if ((reg & TAS6754_FAULT_OTSD_CH3) && !(tas6754->last_fault2 & TAS6754_FAULT_OTSD_CH3))
-		dev_crit(dev, "experienced an overtemp shutdown on CH3\n");
+	if ((reg & TAS6754_OT_FAULT_GLOBAL_OTSD_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_GLOBAL_OTSD_MASK))
+		dev_crit(dev, "experienced a global overtemperature shutdown\n");
 
-	if ((reg & TAS6754_FAULT_OTSD_CH4) && !(tas6754->last_fault2 & TAS6754_FAULT_OTSD_CH4))
-		dev_crit(dev, "experienced an overtemp shutdown on CH4\n");
+	if ((reg & TAS6754_OT_FAULT_CH1_OTSD_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_CH1_OTSD_MASK))
+		dev_crit(dev, "experienced an overtemperature shutdown on CH1\n");
 
-	/* Store current fault2 value so we can detect any changes next time */
-	tas6754->last_fault2 = reg;
+	if ((reg & TAS6754_OT_FAULT_CH2_OTSD_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_CH2_OTSD_MASK))
+		dev_crit(dev, "experienced an overtemperature shutdown on CH2\n");
 
-check_warn_reg:
-	ret = regmap_read(tas6754->regmap, TAS6754_WARN, &reg);
+	if ((reg & TAS6754_OT_FAULT_CH3_OTSD_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_CH3_OTSD_MASK))
+		dev_crit(dev, "experienced an overtemperature shutdown on CH3\n");
+
+	if ((reg & TAS6754_OT_FAULT_CH4_OTSD_MASK) && !(tas6754->last_ot_fault & TAS6754_OT_FAULT_CH4_OTSD_MASK))
+		dev_crit(dev, "experienced an overtemperature shutdown on CH4\n");
+
+	/* Store current Over Temperature (OT) fault value so we can detect any changes next time */
+	tas6754->last_ot_fault = reg;
+
+check_cbc_fault_warn_reg:
+	ret = regmap_read(tas6754->regmap, TAS6754_CBC_FAULT_WARN_LATCHED, &reg);
 	if (ret < 0) {
-		dev_err(dev, "failed to read WARN register: %d\n", ret);
+		dev_err(dev, "failed to read CBC_FAULT_WARN_LATCHED register: %d\n", ret);
 		goto out;
 	}
-
-	reg &= TAS6754_WARN_VDD_UV |
-	       TAS6754_WARN_VDD_POR |
-	       TAS6754_WARN_VDD_OTW |
-	       TAS6754_WARN_VDD_OTW_CH1 |
-	       TAS6754_WARN_VDD_OTW_CH2 |
-	       TAS6754_WARN_VDD_OTW_CH3 |
-	       TAS6754_WARN_VDD_OTW_CH4;
 
 	if (!reg) {
-		tas6754->last_warn = reg;
+		/* No fault detected */
+		tas6754->last_cbc_fault_warn = reg;
+		goto check_rtldg_ol_sl_fault_reg;
+	}
+
+	/* Check if any channel load current fault or warning is currently active and was not active in the previous reading */
+	if ((reg & TAS6754_CBC_WARN_CH1_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_WARN_CH1_MASK))
+		dev_warn(dev, "experienced a channel 1 load current warning\n");
+
+	if ((reg & TAS6754_CBC_WARN_CH2_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_WARN_CH2_MASK))
+		dev_warn(dev, "experienced a channel 2 load current warning\n");
+
+	if ((reg & TAS6754_CBC_WARN_CH3_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_WARN_CH3_MASK))
+		dev_warn(dev, "experienced a channel 3 load current warning\n");
+
+	if ((reg & TAS6754_CBC_WARN_CH4_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_WARN_CH4_MASK))
+		dev_warn(dev, "experienced an channel 4 load current warning\n");
+
+	if ((reg & TAS6754_CBC_FAULT_CH1_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_FAULT_CH1_MASK))
+		dev_warn(dev, "experienced a channel 1 load current fault\n");
+
+	if ((reg & TAS6754_CBC_FAULT_CH2_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_FAULT_CH2_MASK))
+		dev_warn(dev, "experienced a channel 2 load current fault\n");
+
+	if ((reg & TAS6754_CBC_FAULT_CH3_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_FAULT_CH3_MASK))
+		dev_warn(dev, "experienced a channel 3 load current fault\n");
+	
+	if ((reg & TAS6754_CBC_FAULT_CH4_MASK) && !(tas6754->last_cbc_fault_warn & TAS6754_CBC_FAULT_CH4_MASK))
+		dev_warn(dev, "experienced a channel 4 load current fault\n");
+
+	/* Store current channel load current fault or warning value so we can detect any changes next time */
+	tas6754->last_cbc_fault_warn = reg;
+
+check_rtldg_ol_sl_fault_reg:
+	ret = regmap_read(tas6754->regmap, TAS6754_RTLDG_OL_SL_FAULT_LATCHED, &reg);
+	if (ret < 0) {
+		dev_err(dev, "failed to read RTLDG_OL_SL_FAULT_LATCHED register: %d\n", ret);
 		goto out;
 	}
 
-	if ((reg & TAS6754_WARN_VDD_UV) && !(tas6754->last_warn & TAS6754_WARN_VDD_UV))
-		dev_warn(dev, "experienced a VDD under voltage condition\n");
+	if (!reg) {
+		/* No fault detected */
+		tas6754->last_rtldg_ol_sl_fault = reg;//TODO, Where to go now??????
+		goto out;
+	}
 
-	if ((reg & TAS6754_WARN_VDD_POR) && !(tas6754->last_warn & TAS6754_WARN_VDD_POR))
-		dev_warn(dev, "experienced a VDD POR condition\n");
+	/* Check if any shorted/open load fault is currently active and was not active in the previous reading */
+	if ((reg & TAS6754_RTLDG_SL_CH1_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_SL_CH1_MASK))
+		dev_warn(dev, "experienced a shorted load on channel 1 during Real-Time Load Diagnostics\n");
 
-	if ((reg & TAS6754_WARN_VDD_OTW) && !(tas6754->last_warn & TAS6754_WARN_VDD_OTW))
-		dev_warn(dev, "experienced a global overtemp warning\n");
+	if ((reg & TAS6754_RTLDG_SL_CH2_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_SL_CH2_MASK))
+		dev_warn(dev, "experienced a shorted load on channel 2 during Real-Time Load Diagnostics\n");
 
-	if ((reg & TAS6754_WARN_VDD_OTW_CH1) && !(tas6754->last_warn & TAS6754_WARN_VDD_OTW_CH1))
-		dev_warn(dev, "experienced an overtemp warning on CH1\n");
+	if ((reg & TAS6754_RTLDG_SL_CH3_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_SL_CH3_MASK))
+		dev_warn(dev, "experienced a shorted load on channel 3 during Real-Time Load Diagnostics\n");
 
-	if ((reg & TAS6754_WARN_VDD_OTW_CH2) && !(tas6754->last_warn & TAS6754_WARN_VDD_OTW_CH2))
-		dev_warn(dev, "experienced an overtemp warning on CH2\n");
+	if ((reg & TAS6754_RTLDG_SL_CH4_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_SL_CH4_MASK))
+		dev_warn(dev, "experienced an shorted load on channel 4 during Real-Time Load Diagnostics\n");
 
-	if ((reg & TAS6754_WARN_VDD_OTW_CH3) && !(tas6754->last_warn & TAS6754_WARN_VDD_OTW_CH3))
-		dev_warn(dev, "experienced an overtemp warning on CH3\n");
+	if ((reg & TAS6754_RTLDG_OL_CH1_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_OL_CH1_MASK))
+		dev_warn(dev, "experienced an open load on channel 1 during Real-Time Load Diagnostics\n");
 
-	if ((reg & TAS6754_WARN_VDD_OTW_CH4) && !(tas6754->last_warn & TAS6754_WARN_VDD_OTW_CH4))
-		dev_warn(dev, "experienced an overtemp warning on CH4\n");
+	if ((reg & TAS6754_RTLDG_OL_CH2_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_OL_CH2_MASK))
+		dev_warn(dev, "experienced an open load on channel 2 during Real-Time Load Diagnostics\n");
 
-	/* Store current warn value so we can detect any changes next time */
-	tas6754->last_warn = reg;
+	if ((reg & TAS6754_RTLDG_OL_CH3_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_OL_CH3_MASK))
+		dev_warn(dev, "experienced an open load on channel 3 during Real-Time Load Diagnostics\n");
+	
+	if ((reg & TAS6754_RTLDG_OL_CH4_MASK) && !(tas6754->last_rtldg_ol_sl_fault & TAS6754_RTLDG_OL_CH4_MASK))
+		dev_warn(dev, "experienced an open load on channel 4 during Real-Time Load Diagnostics\n");
 
-	/* Clear any warnings by toggling the CLEAR_FAULT control bit */
-	ret = regmap_write_bits(tas6754->regmap, TAS6754_MISC_CTRL3,
-				TAS6754_CLEAR_FAULT, TAS6754_CLEAR_FAULT);
+	/* Store current shorted/open load fault value so we can detect any changes next time */
+	tas6754->last_rtldg_ol_sl_fault = reg;
+
+	/* Clear any fault by toggling the CLEAR FAULT control bit */
+	ret = regmap_write_bits(tas6754->regmap, TAS6754_RESET,
+				TAS6754_RESET_CLEAR_FAULT_MASK, TAS6754_RESET_CLEAR_FAULT_CLEAR);
 	if (ret < 0)
-		dev_err(dev, "failed to write MISC_CTRL3 register: %d\n", ret);
+		dev_err(dev, "failed to write RESET register: %d\n", ret);
 
-	ret = regmap_write_bits(tas6754->regmap, TAS6754_MISC_CTRL3,
-				TAS6754_CLEAR_FAULT, 0);
+	ret = regmap_write_bits(tas6754->regmap, TAS6754_RESET,
+				TAS6754_RESET_CLEAR_FAULT_MASK, TAS6754_RESET_CLEAR_FAULT_NORMAL);
 	if (ret < 0)
-		dev_err(dev, "failed to write MISC_CTRL3 register: %d\n", ret);
+		dev_err(dev, "failed to write RESET register: %d\n", ret);
 
 out:
 	/* Schedule the next fault check at the specified interval */
-	schedule_delayed_work(&tas6754->fault_check_work,
-			      msecs_to_jiffies(TAS6754_FAULT_CHECK_INTERVAL));
+	schedule_delayed_work(&tas6754->fault_check_work, msecs_to_jiffies(TAS6754_FAULT_CHECK_INTERVAL));
 }
 
 static const struct reg_default tas6754_reg_defaults[] = {
-	{ TAS6754_MODE_CTRL,		0x00 },
-	{ TAS6754_MISC_CTRL1,		0x32 },
-	{ TAS6754_MISC_CTRL2,		0x62 },
-	{ TAS6754_SAP_CTRL,		0x04 },
-	{ TAS6754_CH_STATE_CTRL,	0x55 },
-	{ TAS6754_CH1_VOL_CTRL,		0xcf },
-	{ TAS6754_CH2_VOL_CTRL,		0xcf },
-	{ TAS6754_CH3_VOL_CTRL,		0xcf },
-	{ TAS6754_CH4_VOL_CTRL,		0xcf },
-	{ TAS6754_DC_DIAG_CTRL1,	0x00 },
-	{ TAS6754_DC_DIAG_CTRL2,	0x11 },
-	{ TAS6754_DC_DIAG_CTRL3,	0x11 },
-	{ TAS6754_PIN_CTRL,		0xff },
-	{ TAS6754_AC_DIAG_CTRL1,	0x00 },
-	{ TAS6754_MISC_CTRL3,		0x00 },
-	{ TAS6754_CLIP_CTRL,		0x01 },
-	{ TAS6754_CLIP_WINDOW,		0x14 },
-	{ TAS6754_CLIP_WARN,		0x00 },
-	{ TAS6754_CBC_STAT,		0x00 },
-	{ TAS6754_MISC_CTRL4,		0x40 },
+	{ TAS6754_RESET,					0x00},
+	{ TAS6754_OUTPUT_CTRL,              0x00},
+	{ TAS6754_STATE_CTRL_CH1_CH2,       0x22},
+	{ TAS6754_STATE_CTRL_CH3_CH4,       0x22},
+	{ TAS6754_ISENSE_CTRL,              0x0F},
+	{ TAS6754_DC_DETECT_CTRL,           0x00},
+	{ TAS6754_SCLK_INV_CTRL,            0x00},
+	{ TAS6754_AUDIO_INTERFACE_CTRL,     0x00},
+	{ TAS6754_SDIN_CTRL,                0x0A},
+	{ TAS6754_SDOUT_CTRL,               0x1A},
+	{ TAS6754_SDIN_OFFSET_MSB,          0x00},
+	{ TAS6754_SDIN_AUDIO_OFFSET,        0x00},
+	{ TAS6754_SDIN_LL_OFFSET,           0x60},
+	{ TAS6754_SDIN_CH_SWAP,             0x00},
+	{ TAS6754_SDOUT_OFFSET_MSB,         0xCF},
+	{ TAS6754_VPREDICT_OFFSET,          0xFF},
+	{ TAS6754_ISENSE_OFFSET,            0x00},
+	{ TAS6754_SDOUT_EN,                 0x00},
+	{ TAS6754_LL_EN,                    0x00},
+	{ TAS6754_RTLDG_EN,                 0x10},
+	{ TAS6754_DC_BLOCK_BYP,             0x00},
+	{ TAS6754_DSP_CTRL,                 0x00},
+	{ TAS6754_PAGE_AUTO_INC,            0x00},
+	{ TAS6754_DIG_VOL_CH1,              0x30},
+	{ TAS6754_DIG_VOL_CH2,              0x30},
+	{ TAS6754_DIG_VOL_CH3,              0x30},
+	{ TAS6754_DIG_VOL_CH4,              0x30},
+	{ TAS6754_DIG_VOL_RAMP_CTRL,        0x77},
+	{ TAS6754_DIG_VOL_COMBINE_CTRL,     0x00},
+	{ TAS6754_AUTO_MUTE_EN,             0x00},
+	{ TAS6754_AUTO_MUTE_TIMING_CH1_CH2,	0x00},
+	{ TAS6754_AUTO_MUTE_TIMING_CH3_CH4, 0x00},
+	{ TAS6754_ANALOG_GAIN_CH1_CH2,      0x00},
+	{ TAS6754_ANALOG_GAIN_CH3_CH4,      0x00},
+	{ TAS6754_ANALOG_GAIN_RAMP_CTRL,    0x00},
+	{ TAS6754_PULSE_INJECTION_EN,       0x03},
+	{ TAS6754_CBC_CTRL,                 0x07},
+	{ TAS6754_CURRENT_LIMIT_CTRL,       0x00},
+	{ TAS6754_ISENSE_CAL,               0x00},
+	{ TAS6754_PWM_PHASE_CTRL,           0x00},
+	{ TAS6754_SS_CTRL,                  0x00},
+	{ TAS6754_SS_RANGE_CTRL,            0x00},
+	{ TAS6754_SS_DWELL_CTRL,            0x00},
+	{ TAS6754_RAMP_PHASE_CTRL_GPO,      0x00},
+	{ TAS6754_PWM_PHASE_M_CTRL_CH1,     0x00},
+	{ TAS6754_PWM_PHASE_M_CTRL_CH2,     0x00},
+	{ TAS6754_PWM_PHASE_M_CTRL_CH3,     0x00},
+	{ TAS6754_PWM_PHASE_M_CTRL_CH4,     0x00},
+	{ TAS6754_AUTO_MUTE_STATUS,         0x00},
+	{ TAS6754_REPORT_ROUTING_1,         0x00},
+	{ TAS6754_OTSD_RECOVERY_EN,         0x00},
+	{ TAS6754_REPORT_ROUTING_2,         0xA2},
+	{ TAS6754_REPORT_ROUTING_3,         0x00},
+	{ TAS6754_REPORT_ROUTING_4,         0x06},
+	{ TAS6754_CLIP_DETECT_CTRL,         0x00},
+	{ TAS6754_REPORT_ROUTING_5,         0x00},
+	{ TAS6754_GPIO1_OUTPUT_SELECT,      0x00},
+	{ TAS6754_GPIO2_OUTPUT_SELECT,      0x00},
+	{ TAS6754_GPIO_INPUT_SLEEP_HIZ,     0x00},
+	{ TAS6754_GPIO_INPUT_PLAY_SLEEP,    0x00},
+	{ TAS6754_GPIO_INPUT_MUTE,          0x00},
+	{ TAS6754_GPIO_INPUT_SYNC,          0x00},
+	{ TAS6754_GPIO_INPUT_SDIN2,         0x00},
+	{ TAS6754_GPIO_CTRL,                0x22},
+	{ TAS6754_GPIO_INVERT,              0x00},
+	{ TAS6754_DC_LDG_CTRL,              0x00},
+	{ TAS6754_DC_LDG_LO_CTRL,           0x00},
+	{ TAS6754_DC_LDG_TIME_CTRL,         0x00},
+	{ TAS6754_DC_LDG_SL_CH1_CH2_CTRL,   0x11},
+	{ TAS6754_DC_LDG_SL_CH3_CH4_CTRL,   0x11},
+	{ TAS6754_AC_LDG_CTRL,              0x10},
+	{ TAS6754_TWEETER_DETECT_CTRL,      0x08},
+	{ TAS6754_TWEETER_DETECT_THRESH,    0x00},
+	{ TAS6754_AC_LDG_FREQ_CTRL,         0xC8},
+	{ TAS6754_OTW_CTRL_CH1_CH2,         0x11},
+	{ TAS6754_OTW_CTRL_CH3_CH4,         0x11},
 };
 
 static bool tas6754_is_writable_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case TAS6754_MODE_CTRL:
-	case TAS6754_MISC_CTRL1:
-	case TAS6754_MISC_CTRL2:
-	case TAS6754_SAP_CTRL:
-	case TAS6754_CH_STATE_CTRL:
-	case TAS6754_CH1_VOL_CTRL:
-	case TAS6754_CH2_VOL_CTRL:
-	case TAS6754_CH3_VOL_CTRL:
-	case TAS6754_CH4_VOL_CTRL:
-	case TAS6754_DC_DIAG_CTRL1:
-	case TAS6754_DC_DIAG_CTRL2:
-	case TAS6754_DC_DIAG_CTRL3:
-	case TAS6754_PIN_CTRL:
-	case TAS6754_AC_DIAG_CTRL1:
-	case TAS6754_MISC_CTRL3:
-	case TAS6754_CLIP_CTRL:
-	case TAS6754_CLIP_WINDOW:
-	case TAS6754_CLIP_WARN:
-	case TAS6754_CBC_STAT:
-	case TAS6754_MISC_CTRL4:
+	case TAS6754_RESET: /* W */
+	case TAS6754_OUTPUT_CTRL:
+	case TAS6754_STATE_CTRL_CH1_CH2:
+	case TAS6754_STATE_CTRL_CH3_CH4:
+	case TAS6754_ISENSE_CTRL:
+	case TAS6754_DC_DETECT_CTRL:
+	case TAS6754_SCLK_INV_CTRL:
+	case TAS6754_AUDIO_INTERFACE_CTRL:
+	case TAS6754_SDIN_CTRL:
+	case TAS6754_SDOUT_CTRL:
+	case TAS6754_SDIN_OFFSET_MSB:
+	case TAS6754_SDIN_AUDIO_OFFSET:
+	case TAS6754_SDIN_LL_OFFSET:
+	case TAS6754_SDIN_CH_SWAP:
+	case TAS6754_SDOUT_OFFSET_MSB:
+	case TAS6754_VPREDICT_OFFSET:
+	case TAS6754_ISENSE_OFFSET:
+	case TAS6754_SDOUT_EN:
+	case TAS6754_LL_EN:
+	case TAS6754_RTLDG_EN:
+	case TAS6754_DC_BLOCK_BYP:
+	case TAS6754_DSP_CTRL:
+	case TAS6754_PAGE_AUTO_INC:
+	case TAS6754_DIG_VOL_CH1:
+	case TAS6754_DIG_VOL_CH2:
+	case TAS6754_DIG_VOL_CH3:
+	case TAS6754_DIG_VOL_CH4:
+	case TAS6754_DIG_VOL_RAMP_CTRL:
+	case TAS6754_DIG_VOL_COMBINE_CTRL:
+	case TAS6754_AUTO_MUTE_EN:
+	case TAS6754_AUTO_MUTE_TIMING_CH1_CH2:
+	case TAS6754_AUTO_MUTE_TIMING_CH3_CH4:
+	case TAS6754_ANALOG_GAIN_CH1_CH2:
+	case TAS6754_ANALOG_GAIN_CH3_CH4:
+	case TAS6754_ANALOG_GAIN_RAMP_CTRL:
+	case TAS6754_PULSE_INJECTION_EN:
+	case TAS6754_CBC_CTRL:
+	case TAS6754_CURRENT_LIMIT_CTRL:
+	case TAS6754_ISENSE_CAL:
+	case TAS6754_PWM_PHASE_CTRL:
+	case TAS6754_SS_CTRL:
+	case TAS6754_SS_RANGE_CTRL:
+	case TAS6754_SS_DWELL_CTRL:
+	case TAS6754_RAMP_PHASE_CTRL_GPO:
+	case TAS6754_PWM_PHASE_M_CTRL_CH1:
+	case TAS6754_PWM_PHASE_M_CTRL_CH2:
+	case TAS6754_PWM_PHASE_M_CTRL_CH3:
+	case TAS6754_PWM_PHASE_M_CTRL_CH4:
+	case TAS6754_AUTO_MUTE_STATUS:
+	case TAS6754_REPORT_ROUTING_1:
+	case TAS6754_OTSD_RECOVERY_EN:
+	case TAS6754_REPORT_ROUTING_2:
+	case TAS6754_REPORT_ROUTING_3:
+	case TAS6754_REPORT_ROUTING_4:
+	case TAS6754_CLIP_DETECT_CTRL:
+	case TAS6754_REPORT_ROUTING_5:
+	case TAS6754_GPIO1_OUTPUT_SELECT:
+	case TAS6754_GPIO2_OUTPUT_SELECT:
+	case TAS6754_GPIO_INPUT_SLEEP_HIZ:
+	case TAS6754_GPIO_INPUT_PLAY_SLEEP:
+	case TAS6754_GPIO_INPUT_MUTE:
+	case TAS6754_GPIO_INPUT_SYNC:
+	case TAS6754_GPIO_INPUT_SDIN2:
+	case TAS6754_GPIO_CTRL:
+	case TAS6754_GPIO_INVERT:
+	case TAS6754_DC_LDG_CTRL:
+	case TAS6754_DC_LDG_LO_CTRL:
+	case TAS6754_DC_LDG_TIME_CTRL:
+	case TAS6754_DC_LDG_SL_CH1_CH2_CTRL:
+	case TAS6754_DC_LDG_SL_CH3_CH4_CTRL:
+	case TAS6754_AC_LDG_CTRL:
+	case TAS6754_TWEETER_DETECT_CTRL:
+	case TAS6754_TWEETER_DETECT_THRESH:
+	case TAS6754_AC_LDG_FREQ_CTRL:
+	case TAS6754_OTW_CTRL_CH1_CH2:
+	case TAS6754_OTW_CTRL_CH3_CH4:
 		return true;
 	default:
 		return false;
@@ -730,18 +942,56 @@ static bool tas6754_is_writable_reg(struct device *dev, unsigned int reg)
 static bool tas6754_is_volatile_reg(struct device *dev, unsigned int reg)
 {
 	switch (reg) {
-	case TAS6754_DC_LOAD_DIAG_REP12:
-	case TAS6754_DC_LOAD_DIAG_REP34:
-	case TAS6754_DC_LOAD_DIAG_REPLO:
-	case TAS6754_CHANNEL_STATE:
-	case TAS6754_CHANNEL_FAULT:
-	case TAS6754_GLOB_FAULT1:
-	case TAS6754_GLOB_FAULT2:
-	case TAS6754_WARN:
-	case TAS6754_AC_LOAD_DIAG_REP1:
-	case TAS6754_AC_LOAD_DIAG_REP2:
-	case TAS6754_AC_LOAD_DIAG_REP3:
-	case TAS6754_AC_LOAD_DIAG_REP4:
+	case TAS6754_STATE_REPORT_CH1_CH2:
+	case TAS6754_STATE_REPORT_CH3_CH4:
+	case TAS6754_STATE_REPORT_CH1_CH2:
+	case TAS6754_STATE_REPORT_CH3_CH4:
+	case TAS6754_PVDD_SENSE:
+	case TAS6754_TEMP_GLOBAL:
+	case TAS6754_FS_MON:
+	case TAS6754_SCLK_MON:
+	case TAS6754_POWER_FAULT_STATUS_1:
+	case TAS6754_POWER_FAULT_STATUS_2:
+	case TAS6754_OT_FAULT:
+	case TAS6754_OTW_STATUS:
+	case TAS6754_CLIP_WARN_STATUS:
+	case TAS6754_CBC_WARNING_STATUS:
+	case TAS6754_POWER_FAULT_LATCHED:
+	case TAS6754_OTSD_LATCHED:
+	case TAS6754_OTW_LATCHED:
+	case TAS6754_CLIP_WARN_LATCHED:
+	case TAS6754_CLK_FAULT_LATCHED:
+	case TAS6754_RTLDG_OL_SL_FAULT_LATCHED:
+	case TAS6754_CBC_FAULT_WARN_LATCHED:
+	case TAS6754_OC_DC_FAULT_LATCHED:
+	case TAS6754_TEMP_CH1_CH2:
+	case TAS6754_TEMP_CH3_CH4:
+	case TAS6754_WARN_OT_MAX_FLAG:
+	case TAS6754_DC_LDG_REPORT_CH1_CH2:
+	case TAS6754_DC_LDG_REPORT_CH3_CH4:
+	case TAS6754_DC_LDG_RESULT:
+	case TAS6754_AC_LDG_REPORT_CH1_R:
+	case TAS6754_AC_LDG_REPORT_CH1_I:
+	case TAS6754_AC_LDG_REPORT_CH2_R:
+	case TAS6754_AC_LDG_REPORT_CH2_I:
+	case TAS6754_AC_LDG_REPORT_CH3_R:
+	case TAS6754_AC_LDG_REPORT_CH3_I:
+	case TAS6754_AC_LDG_REPORT_CH4_R:
+	case TAS6754_AC_LDG_REPORT_CH4_I:
+	case TAS6754_TWEETER_REPORT:
+	case TAS6754_CH1_RTLDG_IMP_MSB:
+	case TAS6754_CH1_RTLDG_IMP_LSB:
+	case TAS6754_CH2_RTLDG_IMP_MSB:
+	case TAS6754_CH2_RTLDG_IMP_LSB:
+	case TAS6754_CH3_RTLDG_IMP_MSB:
+	case TAS6754_CH3_RTLDG_IMP_LSB:
+	case TAS6754_CH4_RTLDG_IMP_MSB:
+	case TAS6754_CH4_RTLDG_IMP_LSB:
+	case TAS6754_DC_LDG_DCR_MSB:
+	case TAS6754_CH1_DC_LDG_DCR_LSB:
+	case TAS6754_CH2_DC_LDG_DCR_LSB:
+	case TAS6754_CH3_DC_LDG_DCR_LSB:
+	case TAS6754_CH4_DC_LDG_DCR_LSB:
 		return true;
 	default:
 		return false;
@@ -763,8 +1013,8 @@ static const struct regmap_config tas6754_regmap_config = {
 
 #if IS_ENABLED(CONFIG_OF)
 static const struct of_device_id tas6754_of_ids[] = {
-	{ .compatible = "ti,tas6754", },
-	{ },
+	{ .compatible = "ti,tas6754" },
+	{},
 };
 MODULE_DEVICE_TABLE(of, tas6754_of_ids);
 #endif
@@ -789,7 +1039,12 @@ static int tas6754_i2c_probe(struct i2c_client *client)
 		dev_err(dev, "unable to allocate register map: %d\n", ret);
 		return ret;
 	}
+	/* tas6754: Enables low power DEEP SLEEP state (active low), 
+				110kΩ internal pull-down resistor*/
 
+	/* tas6424: Enables low power standby state (active Low),
+				100-kΩ internal pulldown resistor */
+	
 	/*
 	 * Get control of the standby pin and set it LOW to take the codec
 	 * out of the stand-by mode.
@@ -805,6 +1060,9 @@ static int tas6754_i2c_probe(struct i2c_client *client)
 			PTR_ERR(tas6754->standby_gpio));
 		tas6754->standby_gpio = NULL;
 	}
+
+
+	/* tas6424: Mutes the device outputs (active low), 100-kΩ internal pulldown resistor */
 
 	/*
 	 * Get control of the mute pin and set it HIGH in order to start with
@@ -839,17 +1097,23 @@ static int tas6754_i2c_probe(struct i2c_client *client)
 	}
 
 	/* Reset device to establish well-defined startup state */
-	ret = regmap_update_bits(tas6754->regmap, TAS6754_MODE_CTRL,
-				 TAS6754_RESET, TAS6754_RESET);
+	ret = regmap_update_bits(tas6754->regmap, TAS6754_RESET,
+				 TAS6754_RESET_DEVICE_RESET_MASK, TAS6754_RESET_DEVICE_RESET);
 	if (ret) {
 		dev_err(dev, "unable to reset device: %d\n", ret);
+		goto disable_regs;
+	}
+	ret = regmap_update_bits(tas6754->regmap, TAS6754_RESET,
+				 TAS6754_RESET_REGISTER_RESET_MASK, TAS6754_RESET_REGISTER_RESET);
+	if (ret) {
+		dev_err(dev, "unable to reset registers: %d\n", ret);
 		goto disable_regs;
 	}
 
 	INIT_DELAYED_WORK(&tas6754->fault_check_work, tas6754_fault_check_work);
 
-	ret = devm_snd_soc_register_component(dev, &soc_codec_dev_tas6754,
-				     tas6754_dai, ARRAY_SIZE(tas6754_dai));
+	/* Register codec with ALSA  */
+	ret = devm_snd_soc_register_component(dev, &soc_codec_dev_tas6754, tas6754_dai, ARRAY_SIZE(tas6754_dai));
 	if (ret < 0) {
 		dev_err(dev, "unable to register codec: %d\n", ret);
 		goto disable_regs;
