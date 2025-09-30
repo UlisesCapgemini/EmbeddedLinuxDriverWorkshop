@@ -48,8 +48,32 @@ struct tas6754_data {
 	unsigned int last_rtldg_ol_sl_fault;
 	struct gpio_desc *pd_gpio;
     struct gpio_desc *stby_gpio;
-	//struct gpio_desc *standby_gpio;
-	//struct gpio_desc *mute_gpio;
+	//struct gpio_desc *mute_gpio;//TODO: Check mute handling via registers or GPIO additional config?
+	    
+    /* Audio interface configuration (ENHANCED)*/
+    bool tdm_mode;                		/* Whether in TDM mode */
+    bool dsp_a_mode;              		/* Whether in DSP_A mode (needs 1-bit offset) */
+    bool short_fsync;             		/* Whether FSYNC pulse is < 8 SCLK cycles */
+    bool use_sdin2_for_ch34;      		/* Whether to use SDIN2 for channels 3-4 */
+    bool ll_enabled;              		/* Whether low latency channels are enabled */
+    unsigned int bit_depth;       		/* Current bit depth */
+    unsigned int sample_rate;     		/* Current sample rate */
+    unsigned int channels;        		/* Current channel count */
+    unsigned int dai_fmt;         		/* Current DAI format */
+    unsigned int channel_offset;  		/* Custom channel offset (in bits) */
+    unsigned int ll_offset;       		/* Low latency channel offset (in bits) */
+    unsigned int sdin2_gpio_num;  		/* GPIO number to use for SDIN2 (1 or 2) */
+    unsigned int tdm_slots;       		/* Number of TDM slots (4, 8, or 16) */
+    unsigned int tdm_slot_width;  		/* TDM slot width (16, 20, 24, or 32) */
+    unsigned int channel_map[4];  		/* Mapping of channels to TDM slots */
+    unsigned int audio_swap;      		/* Audio channel swap option */
+    unsigned int ll_swap;         		/* Low latency channel swap option */
+	//bool support_rate_change;  		/* TODO: [Desired] to support on-the-fly rate changes */
+	//unsigned int detected_sclk_ratio; /* TODO: [Optional] SCLK ratio detected by the device. Useful for:*/
+															/*-Debugging
+															-Potentially adjusting settings based on the detected ratio
+															-Reporting the ratio through sysfs or debugfs*/
+
 };
 
 /*
@@ -113,239 +137,929 @@ static const struct snd_soc_dapm_route tas6754_audio_map[] = {
 };
 
 
+/**
+ * tas6754_hw_params
+ * @brief: Configure hardware parameters for audio stream (sample rate, bit depth, channels)
+ * 
+ * @substream:
+ * @params:
+ * @dai:
+ * 
+ * @return
+ */
 static int tas6754_hw_params(struct snd_pcm_substream *substream,
-			     struct snd_pcm_hw_params *params,
-			     struct snd_soc_dai *dai)
+                            struct snd_pcm_hw_params *params,
+                            struct snd_soc_dai *dai)
 {
-	struct snd_soc_component *component = dai->component;
-	unsigned int rate = params_rate(params);
-	unsigned int width = params_width(params);
-	u8 sap_ctrl = 0;
-	int ret;
-
-	dev_dbg(component->dev, "%s() rate=%u width=%u\n", __func__, rate, width);
-
-	/* Set the sample rate */
-	switch (rate) {
-	case 44100:
-		sap_ctrl |= TAS6754_SAP_RATE_44100;
-		break;
-	case 48000:
-		sap_ctrl |= TAS6754_SAP_RATE_48000;
-		break;
-	case 96000:
-		sap_ctrl |= TAS6754_SAP_RATE_96000;
-		break;
-	case 192000:
-		sap_ctrl |= TAS6754_SAP_RATE_192000;
-		break;
-	default:
-		dev_err(component->dev, "unsupported sample rate: %u\n", rate);
-		return -EINVAL;
-	}
-
-	/* Set the sample width */
-	switch (width) {
-	case 16:
-		sap_ctrl |= TAS6754_SAP_TDM_SLOT_SZ_16;
-		break;
-	case 24:
-		/* Default is 24-bit, no need to set any bits */
-		break;
-	default:
-		dev_err(component->dev, "unsupported sample width: %u\n", width);
-		return -EINVAL;
-	}
-
-	/* Update the SAP control register with the new settings */
-	ret = snd_soc_component_update_bits(component, TAS6754_SAP_CTRL,
-			    TAS6754_SAP_RATE_MASK |
-			    TAS6754_SAP_TDM_SLOT_SZ_16,
-			    sap_ctrl);
-	if (ret < 0) {
-		dev_err(component->dev, "failed to update SAP_CTRL: %d\n", ret);
-		return ret;
-	}
-
-	/* 
-	 * For higher sample rates (96kHz and 192kHz), we may need to adjust
-	 * the PWM frequency to maintain good audio quality
-	 */
-	if (rate >= 96000) {
-		/* Set PWM frequency to the highest setting for high sample rates */
-		ret = snd_soc_component_update_bits(component, TAS6754_MISC_CTRL2,
-				TAS6754_PWM_FREQ_MASK,
-				0x6 << 4); /* Set to 44x or 48x fs */
-		if (ret < 0) {
-			dev_err(component->dev, "failed to update PWM frequency: %d\n", ret);
-			return ret;
-		}
-	}
-
-	return 0;
+    struct snd_soc_component *component = dai->component;
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    unsigned int rate, channels, format;
+    u8 audio_intf_ctrl, sdin_ctrl, offset_msb = 0, audio_offset = 0;
+    int ret;
+    
+    rate = params_rate(params);
+    channels = params_channels(params);
+    format = params_format(params);
+    
+    /* Store current configuration */
+    tas6754->bit_depth = snd_pcm_format_width(format);
+    tas6754->sample_rate = rate;
+    tas6754->channels = channels;
+    
+    /* Read current audio interface control register */
+    ret = snd_soc_component_read(component, TAS6754_AUDIO_INTERFACE_CTRL, &audio_intf_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Configure TDM mode if needed */
+    if (channels > 4) {
+        /* Enable TDM mode for > 4 channels */
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_TDM_MODE;;
+        tas6754->tdm_mode = true;
+        
+        /* Make sure DSP format is set */
+        audio_intf_ctrl &= ~(0x0C); /* Clear format bits */
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FORMAT_TDM_DSP;
+    }
+    
+    /* Write updated audio interface control register */
+    ret = snd_soc_component_write(component, TAS6754_AUDIO_INTERFACE_CTRL, audio_intf_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Configure SDIN_CTRL register for data length */
+    sdin_ctrl = 0;
+    
+    /* Set data length for channels 1-2 or audio path in TDM mode */
+    switch (tas6754->bit_depth) {
+    case 16:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_16BIT;
+        break;
+    case 20:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_20BIT;
+        break;
+    case 24:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_24BIT;
+        break;
+    case 32:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_32BIT;
+        break;
+    default:
+        dev_err(component->dev, "Unsupported bit depth: %u\n", tas6754->bit_depth);
+        return -EINVAL;
+    }
+    
+    /* Set data length for channels 3-4 or low latency path in TDM mode */
+    switch (tas6754->bit_depth) {
+    case 16:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_2_16BIT;
+        break;
+    case 20:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_2_20BIT;
+        break;
+    case 24:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_2_24BIT;
+        break;
+    case 32:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_2_32BIT;
+        break;
+    }
+    
+    /* Configure SDIN source */
+    if (tas6754->tdm_mode) {
+        /* In TDM mode, typically all channels come from SDIN_1 */
+        sdin_ctrl |= TAS6754_SDIN_CTRL_TDM_AUDIO_SDIN1;
+        sdin_ctrl |= TAS6754_SDIN_CTRL_TDM_LL_SDIN1;
+    } else if (channels > 2 && tas6754->use_sdin2_for_ch34) {
+        /* In I2S/LJ/RJ mode with >2 channels, optionally use SDIN_2 for channels 3-4 */
+        sdin_ctrl |= TAS6754_SDIN_CTRL_TDM_AUDIO_SDIN2;
+        
+        /* Configure GPIO as SDIN2 */
+        ret = tas6754_configure_sdin2(component, tas6754->sdin2_gpio_num);
+        if (ret < 0)
+            return ret;
+    } else {
+        /* Default: use SDIN_1 for all channels */
+        sdin_ctrl |= TAS6754_SDIN_CTRL_TDM_AUDIO_SDIN1;
+    }
+    
+    /* Write SDIN_CTRL register */
+    ret = snd_soc_component_write(component, TAS6754_SDIN_CTRL, sdin_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Configure channel offsets if needed */
+    if (tas6754->dsp_a_mode || tas6754->tdm_mode || tas6754->channel_offset != 0) {
+        /* Calculate offset value */
+        unsigned int offset = tas6754->channel_offset;
+        
+        /* For DSP_A mode, add 1-bit offset */
+        if (tas6754->dsp_a_mode)
+            offset += 1;
+        
+        /* Set offset MSB (bits 8-9) in bits 7-6 of SDIN_OFFSET_MSB */
+        offset_msb |= ((offset >> 8) & 0x03) << 6;
+        
+        /* Set offset LSB (bits 0-7) */
+        audio_offset = offset & 0xFF;
+        
+        /* Write offset registers */
+        ret = snd_soc_component_write(component, TAS6754_SDIN_OFFSET_MSB, offset_msb);
+        if (ret < 0)
+            return ret;
+        
+        ret = snd_soc_component_write(component, TAS6754_SDIN_AUDIO_OFFSET, audio_offset);
+        if (ret < 0)
+            return ret;
+        
+        /* If low latency is enabled in TDM mode, configure its offset */
+        if (tas6754->tdm_mode && tas6754->ll_enabled) {
+            u8 ll_offset;
+            unsigned int ll_offset_value = tas6754->ll_offset;
+            
+            /* Set LL offset MSB (bits 8-9) in bits 5-4 of SDIN_OFFSET_MSB */
+            offset_msb &= ~(0x30); /* Clear bits 5-4 */
+            offset_msb |= ((ll_offset_value >> 8) & 0x03) << 4;
+            
+            /* Set LL offset LSB (bits 0-7) */
+            ll_offset = ll_offset_value & 0xFF;
+            
+            /* Write updated offset MSB register */
+            ret = snd_soc_component_write(component, TAS6754_SDIN_OFFSET_MSB, offset_msb);
+            if (ret < 0)
+                return ret;
+            
+            /* Write LL offset LSB register */
+            ret = snd_soc_component_write(component, TAS6754_SDIN_LL_OFFSET, ll_offset);
+            if (ret < 0)
+                return ret;
+        }
+    }
+    
+    /* Wait for the device to detect the sample rate */
+    msleep(10);
+    
+    /* Verify that the device has detected the correct sample rate */
+    ret = tas6754_verify_sample_rate(component, rate);
+    if (ret < 0)
+        return ret;
+    
+    return 0;
 }
 
+/**
+ * tas6754_verify_sample_rate
+ * @brief: Verify that the device has detected the correct sample rate and SCLK ratio
+ * 
+ * @component:
+ * @rate:
+ * 
+ * @return:
+ */
+static int tas6754_verify_sample_rate(struct snd_soc_component *component, unsigned int rate)
+{
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    u8 fs_mon, sclk_mon;
+    u8 expected_fs_code;
+    u16 sclk_ratio;
+    int ret;
+    
+    /* Read FS_MON register to check detected sample rate */
+    ret = snd_soc_component_read(component, TAS6754_FS_MON, &fs_mon);
+    if (ret < 0)
+        return ret;
+    
+    /* Read SCLK_MON register to check detected SCLK ratio */
+    ret = snd_soc_component_read(component, TAS6754_SCLK_MON, &sclk_mon);
+    if (ret < 0)
+        return ret;
+    
+    /* Extract detected sample rate code */
+    u8 detected_fs_code = fs_mon & 0x0F;
+    
+    /* Calculate expected sample rate code based on input rate */
+    switch (rate) {
+    case 48000:
+        expected_fs_code = TAS6754_FS_48KHZ;
+        break;
+    case 96000:
+        expected_fs_code = TAS6754_FS_96KHZ;
+        break;
+    case 192000:
+        expected_fs_code = TAS6754_FS_192KHZ;
+        break;
+		/* Handling Approach:
+		 * Since the datasheet mentions support for 44.1kHz but doesn't list its detection code,
+		 * the function takes a pragmatic approach:
+		 * - Accept whatever code the device reports for 44.1kHz family rates (Compatibility).
+		 * - This allows the driver to work with 44.1kHz even though we don't know the exact expected code
+		 * */
+    case 44100:
+    case 88200:
+    case 176400:
+		/* Add more detailed logging when 44.1kHz family rates are detected */
+		dev_info(component->dev, "44.1kHz family rate %u Hz detected with code 0x%x\n",
+            rate, detected_fs_code);
+        /* The datasheet doesn't explicitly list codes for 44.1kHz family,
+         * but we'll assume they're supported as mentioned in the description */
+        expected_fs_code = detected_fs_code; /* Accept whatever was detected */
+        break;
+    default:
+        dev_err(component->dev, "Unsupported sample rate: %u Hz\n", rate);
+        return -EINVAL;
+    }
+    
+    /* Check if detected sample rate matches expected */
+    if (detected_fs_code == TAS6754_FS_MON_SAMPLE_RATE_ERROR) {
+        dev_err(component->dev, "Sample rate detection error\n");
+        return -EIO;
+    }
+    
+    if (detected_fs_code != expected_fs_code) {
+        dev_warn(component->dev, 
+                "Sample rate mismatch: expected %u Hz (code 0x%x), detected code 0x%x\n",
+                rate, expected_fs_code, detected_fs_code);
+    /* We'll continue anyway, as the device might have detected a valid rate */
+    } else {
+        dev_dbg(component->dev, "Sample rate correctly detected: %u Hz (code 0x%x)\n",
+               rate, detected_fs_code);
+    }
 
+	/* Calculate full SCLK ratio for a total of 10 bits SCLK ratio range between 32Fs to 512Fs.*/
+    sclk_ratio = ((fs_mon & TAS6754_FS_MON_SCLK_RATIO_MSB_MASK) >> TAS6754_FS_MON_SCLK_RATIO_MSB_SHIFT) << 8;
+    sclk_ratio |= sclk_mon;
+    
+    dev_dbg(component->dev, "Detected SCLK ratio: %u x Fs\n", sclk_ratio);	   
+    
+    /* Verify SCLK ratio is within supported range */
+    if (sclk_ratio < 32 || sclk_ratio > 512) {
+        dev_err(component->dev, "SCLK ratio out of range: %u x Fs\n", sclk_ratio);
+        return -EIO;
+    }
+    
+    /* Store the detected SCLK ratio for reference 
+	TODO: [Optional] SCLK ratio detected by the device. Useful for:
+		- Debugging
+		- Potentially adjusting settings based on the detected ratio
+		- Reporting the ratio through sysfs or debugfs*/
+    //tas6754->detected_sclk_ratio = sclk_ratio;
+    
+    return 0;
+}
 
-
-
+/**
+ * tas6754_set_dai_fmt
+ * @brief: Set DAI format, Clock polarity and related settings.
+ * 
+ * @dai:
+ * @fmt:
+ * 
+ * @return:
+ */
 static int tas6754_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
-	struct snd_soc_component *component = dai->component;
-	u8 serial_format = 0;
+    struct snd_soc_component *component = dai->component;
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    u8 audio_intf_ctrl = 0;
+	u8 sclk_inv_ctrl = 0;
+    int ret;
+    
+    /* Store the DAI format for later use */
+    tas6754->dai_fmt = fmt & SND_SOC_DAIFMT_FORMAT_MASK;
+    
+    /* Read current audio interface control register */
+    ret = snd_soc_component_read(component, TAS6754_AUDIO_INTERFACE_CTRL, &audio_intf_ctrl);
+    if (ret < 0)
+        return ret;
 
-	dev_dbg(component->dev, "%s() fmt=0x%0x\n", __func__, fmt);
+    /* Read current SCLK inversion control register */
+    ret = snd_soc_component_read(component, TAS6754_SCLK_INV_CTRL, &sclk_inv_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Clear SCLK inversion bits */
+    sclk_inv_ctrl &= ~(TAS6754_SCLK_INV_CTRL_SCLK_INV_TX_MASK | TAS6754_SCLK_INV_CTRL_SCLK_INV_MASK);
+    
+    /* Clear format bits while preserving other settings */
+    audio_intf_ctrl &= ~(0x0C); /* Clear ASI FORMAT bits (3-2) */
+    
+    /* Format setting */
+    switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
+    case SND_SOC_DAIFMT_I2S:
+        /* Set I2S format (00) */
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FORMAT_I2S;
+        tas6754->tdm_mode = false;
+        break;
+        
+    case SND_SOC_DAIFMT_LEFT_J:
+        /* Set Left-Justified format (11) */
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FORMAT_LTJ;
+        tas6754->tdm_mode = false;
+        break;
+        
+    case SND_SOC_DAIFMT_RIGHT_J:
+        /* Set Right-Justified format (10) */
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FORMAT_RTJ;
+        tas6754->tdm_mode = false;
+        break;
+        
+    case SND_SOC_DAIFMT_DSP_A:
+    case SND_SOC_DAIFMT_DSP_B:
+        /* Set DSP/TDM format (01) */
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FORMAT_TDM_DSP;
+        
+        /* For DSP_A, we need to configure the offset */
+        if ((fmt & SND_SOC_DAIFMT_FORMAT_MASK) == SND_SOC_DAIFMT_DSP_A) {
+            /* DSP_A has a 1-bit offset, configure in SDIN_AUDIO_OFFSET */
+            tas6754->dsp_a_mode = true;
+        } else {
+            tas6754->dsp_a_mode = false;
+        }
+        
+        /* Clear TDM bit - we'll set it in hw_params if needed */
+        audio_intf_ctrl &= ~(0x10); /* Clear TDM bit (4) */
+        tas6754->tdm_mode = false;
+        break;
+        
+    default:
+        dev_err(component->dev, "Unsupported DAI format %d\n",
+                fmt & SND_SOC_DAIFMT_FORMAT_MASK);
+        return -EINVAL;
+    }
 
-	/* clock masters */
-	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
-	case SND_SOC_DAIFMT_CBC_CFC:
-		break;
-	default:
-		dev_err(component->dev, "Invalid DAI clocking\n");
-		return -EINVAL;
-	}
-
-	/* signal polarity */
-	switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
-	case SND_SOC_DAIFMT_NB_NF:
-		break;
-	default:
-		dev_err(component->dev, "Invalid DAI clock signal polarity\n");
-		return -EINVAL;
-	}
-
-	/* interface format */
-	switch (fmt & SND_SOC_DAIFMT_FORMAT_MASK) {
-	case SND_SOC_DAIFMT_I2S:
-		serial_format |= TAS6754_SAP_I2S;
-		break;
-	case SND_SOC_DAIFMT_DSP_A:
-		serial_format |= TAS6754_SAP_DSP;
-		break;
-	case SND_SOC_DAIFMT_DSP_B:
-		/*
-		 * We can use the fact that the TAS6754 does not care about the
-		 * LRCLK duty cycle during TDM to receive DSP_B formatted data
-		 * in LEFTJ mode (no delaying of the 1st data bit).
-		 */
-		serial_format |= TAS6754_SAP_LEFTJ;
-		break;
-	case SND_SOC_DAIFMT_LEFT_J:
-		serial_format |= TAS6754_SAP_LEFTJ;
-		break;
-	default:
-		dev_err(component->dev, "Invalid DAI interface format\n");
-		return -EINVAL;
-	}
-
-	snd_soc_component_update_bits(component, TAS6754_SAP_CTRL,
-			    TAS6754_SAP_FMT_MASK, serial_format);
-
-	return 0;
+	/* Clock polarity setting */
+    switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
+    case SND_SOC_DAIFMT_NB_NF:
+        /* BCLK not inverted, FSYNC not inverted */
+        /* Normal SCLK mode - default, no need to set bits */
+        break;
+    case SND_SOC_DAIFMT_IB_NF:
+        /* BCLK inverted, FSYNC not inverted */
+        /* Inverted SCLK mode */
+        sclk_inv_ctrl |= TAS6754_SCLK_INV_CTRL_TX_INVERTED | TAS6754_SCLK_INV_CTRL_INVERTED;
+        break;
+    case SND_SOC_DAIFMT_NB_IF:
+        /* BCLK not inverted, FSYNC inverted */
+        /* Handle FSYNC inversion if needed */
+        break;
+    case SND_SOC_DAIFMT_IB_IF:
+        /* BCLK inverted, FSYNC inverted */
+        /* Inverted SCLK mode */
+        sclk_inv_ctrl |= TAS6754_SCLK_INV_CTRL_TX_INVERTED | TAS6754_SCLK_INV_CTRL_INVERTED;
+        /* Handle FSYNC inversion if needed */
+        break;
+    default:
+        dev_err(component->dev, "Unsupported clock polarity setting: 0x%x\n",
+                fmt & SND_SOC_DAIFMT_INV_MASK);
+        return -EINVAL;
+    }
+    
+    /* Write SCLK inversion control register */
+    ret = snd_soc_component_write(component, TAS6754_SCLK_INV_CTRL, sclk_inv_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* FSYNC pulse width for DSP/TDM mode */
+    if ((fmt & SND_SOC_DAIFMT_FORMAT_MASK) == SND_SOC_DAIFMT_DSP_A ||
+        (fmt & SND_SOC_DAIFMT_FORMAT_MASK) == SND_SOC_DAIFMT_DSP_B) {
+        
+        /* Check if we need to set the FSYNC pulse width bit */
+        if (tas6754->short_fsync) {
+            /* FSYNC pulse < 8 SCLK cycles */
+            audio_intf_ctrl &= ~(0x03); /* Clear FS PULSE WIDTH bits (1-0) */
+            audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_SHORT;//TAS6754_FS_PULSE_WIDTH_SHORT;
+        } else {
+            /* FSYNC pulse >= 8 SCLK cycles (default) */
+            audio_intf_ctrl &= ~(0x03); /* Clear FS PULSE WIDTH bits (1-0) */
+            audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_LONG;// TAS6754_FS_PULSE_WIDTH_LONG;
+        }
+    }
+    
+    /* Enable last sample hold for better audio quality during clock errors */
+    audio_intf_ctrl &= ~(0x80); /* Clear last sample hold bit (7) */
+    audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_LAST_SAMPLE_HOLD_ENABLE;//TAS6754_LAST_SAMPLE_HOLD_EN;
+    
+    /* Write audio interface control register */
+    ret = snd_soc_component_write(component, TAS6754_AUDIO_INTERFACE_CTRL, audio_intf_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    return 0;
 }
 
+/**
+ * tas6754_set_dai_tdm_slot
+ * @brief: Wrapper function that matches the ALSA SoC signature and calls tas6754_configure_tdm
+ * The ALSA SoC set_tdm_slot callback has a specific signature:
+ * int (*set_tdm_slot) (struct snd_soc_dai *dai, unsigned int tx_mask, 
+ * 							unsigned int rx_mask, int slots, int slot_width);
+ * @dai: 
+ * @tx_mask:
+ * @rx_mask:
+ * @slots:
+ * @slot_width:
+ * 
+ * @return:
+ */
+static int tas6754_set_dai_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
+                            unsigned int rx_mask, int slots, int slot_width)
 
-static int tas6754_set_dai_tdm_slot(struct snd_soc_dai *dai,
-				    unsigned int tx_mask, unsigned int rx_mask,
-				    int slots, int slot_width)
 {
-	struct snd_soc_component *component = dai->component;
-	unsigned int first_slot, last_slot;
-	bool sap_tdm_slot_last;
-	u8 tdm_config = 0;
-	int ret;
+    struct snd_soc_component *component = dai->component;
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    unsigned int channel_map[4] = {0};
+    int i, count = 0;
+    
+    /* Convert tx_mask to channel_map */
+    for (i = 0; i < 32 && count < 4; i++) {
+        if (tx_mask & (1 << i)) {
+            channel_map[count++] = i;
+        }
+    }
+    
+    /* Use the stored audio_swap and ll_swap values */
+    return tas6754_configure_tdm(component, slot_width, slots, 
+                               channel_map, tas6754->audio_swap, tas6754->ll_swap);
+}
 
-	dev_dbg(component->dev, "%s() tx_mask=0x%x rx_mask=0x%x slots=%d slot_width=%d\n", 
-		__func__, tx_mask, rx_mask, slots, slot_width);
+/**
+ * tas6754_configure_tdm
+ * @brief: Configures the TAS6754 for TDM operation with the specified
+ * parameters. It sets up the proper offsets for each channel group and
+ * configures the channel mapping. 
+ * 
+ * @component: The component instance
+ * @slot_width: TDM slot width (16, 20, 24, or 32 bits)
+ * @slots: Number of TDM slots (4, 8, or 16)
+ * @channel_map: Array mapping physical channels to TDM slots
+ * @audio_swap: Audio channel swap option (0-31)
+ * @ll_swap: Low latency channel swap option (0-7)
+ *
+ * @return: Returns 0 on success, or a negative error code.
+ */
+static int tas6754_configure_tdm(struct snd_soc_component *component,
+                               int slot_width, int slots,
+                               const unsigned int *channel_map,
+                               unsigned int audio_swap, unsigned int ll_swap)
+{
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    u8 audio_intf_ctrl, sdin_ctrl, offset_msb = 0;
+    u8 audio_offset = 0, ll_offset = 0, ch_swap = 0;
+    int ret;
+    
+    /* Validate parameters */
+    if (slot_width != 16 && slot_width != 20 && 
+        slot_width != 24 && slot_width != 32) {
+        dev_err(component->dev, "Invalid TDM slot width: %d\n", slot_width);
+        return -EINVAL;
+    }
+    
+    if (slots != 4 && slots != 8 && slots != 16) {
+        dev_err(component->dev, "Invalid TDM slot count: %d\n", slots);
+        return -EINVAL;
+    }
+    
+    if (audio_swap > 31) {
+        dev_err(component->dev, "Invalid audio swap option: %u\n", audio_swap);
+        return -EINVAL;
+    }
+    
+    if (ll_swap > 7) {
+        dev_err(component->dev, "Invalid low latency swap option: %u\n", ll_swap);
+        return -EINVAL;
+    }
+    
+    /* Read current audio interface control register */
+    ret = snd_soc_component_read(component, TAS6754_AUDIO_INTERFACE_CTRL, &audio_intf_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Set DSP format and enable TDM mode,
+	   i.e., enable TDM mode when format is set to TDM/DSP */
+    audio_intf_ctrl &= ~(0x1C); /* Clear format and TDM bits */
+    audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FORMAT_TDM_DSP | TAS6754_AUDIO_INTERFACE_TDM_MODE;
+    
+    /* Configure FSYNC pulse width */
+    audio_intf_ctrl &= ~(0x03); /* Clear FS PULSE WIDTH bits */
+    if (tas6754->short_fsync) {
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_SHORT;
+    } else {
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_LONG;
+    }
+    
+    /* Write audio interface control register */
+    ret = snd_soc_component_write(component, TAS6754_AUDIO_INTERFACE_CTRL, audio_intf_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Configure SDIN_CTRL register for data length and source */
+    sdin_ctrl = 0;
 
-	if (!tx_mask || !rx_mask)
-		return 0; /* nothing needed to disable TDM mode */
+    /* Set data length based on slot width */
+    switch (slot_width) {
+    case 16:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_16BIT | TAS6754_SDIN_CTRL_WL_SELECT_2_16BIT;
+        break;
+    case 20:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_20BIT | TAS6754_SDIN_CTRL_WL_SELECT_2_20BIT;
+        break;
+    case 24:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_24BIT | TAS6754_SDIN_CTRL_WL_SELECT_2_24BIT;
+        break;
+    case 32:
+        sdin_ctrl |= TAS6754_SDIN_CTRL_WL_SELECT_1_32BIT | TAS6754_SDIN_CTRL_WL_SELECT_2_32BIT;
+        break;
+    }
+    
+    /* In TDM mode, typically all channels come from SDIN_1 */
+    sdin_ctrl |= TAS6754_SDIN_CTRL_TDM_AUDIO_SDIN1;
+    sdin_ctrl |= TAS6754_SDIN_CTRL_TDM_LL_SDIN1;
+    
+    /* Write SDIN_CTRL register */
+    ret = snd_soc_component_write(component, TAS6754_SDIN_CTRL, sdin_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Calculate offsets for audio channels based on channel map */
+    if (channel_map) {
+        /* Find the offset for the first used channel */
+        unsigned int audio_ch_offset = channel_map[0] * slot_width;
+        
+        /* Set audio channel offset */
+        offset_msb |= ((audio_ch_offset >> 8) & 0x03) << 6;
+        audio_offset = audio_ch_offset & 0xFF;
+        
+        /* If low latency channels are enabled, set their offset too */
+        if (tas6754->ll_enabled) {
+            unsigned int ll_ch_offset = 0;
+            
+            /* Find the offset for the first low latency channel */
+            /* This is typically after the regular audio channels */
+            ll_ch_offset = slots * slot_width;
+            
+            /* Set low latency channel offset */
+            offset_msb |= ((ll_ch_offset >> 8) & 0x03) << 4;
+            ll_offset = ll_ch_offset & 0xFF;
+        }
+    }
+    
+    /* Configure channel swap settings */
+    ch_swap = audio_swap & 0x1F;           /* Audio channel swap (bits 4-0) */
+    ch_swap |= (ll_swap & 0x07) << 5;      /* LL channel swap (bits 7-5) */
+    
+    /* Set channel swap MSB in SDIN_OFFSET_MSB register */
+    offset_msb |= ((ll_swap >> 2) & 0x01) << 3;  /* LL CH SWAP MSB (bit 3) */
+    offset_msb |= ((ll_swap >> 3) & 0x01) << 2;  /* LL CH SWAP MSB (bit 2) */
+    
+    /* Write offset registers */
+    ret = snd_soc_component_write(component, TAS6754_SDIN_OFFSET_MSB, offset_msb);
+    if (ret < 0)
+        return ret;
+    
+    ret = snd_soc_component_write(component, TAS6754_SDIN_AUDIO_OFFSET, audio_offset);
+    if (ret < 0)
+        return ret;
+    
+    /* Write low latency offset if enabled */
+    if (tas6754->ll_enabled) {
+        ret = snd_soc_component_write(component, TAS6754_SDIN_LL_OFFSET, ll_offset);
+        if (ret < 0)
+            return ret;
+    }
+    
+    /* Write channel swap register */
+    ret = snd_soc_component_write(component, TAS6754_SDIN_CH_SWAP, ch_swap);
+    if (ret < 0)
+        return ret;
+    
+    /* Store TDM configuration */
+    tas6754->tdm_mode = true;
+    tas6754->bit_depth = slot_width;
+    tas6754->tdm_slots = slots;
+    tas6754->tdm_slot_width = slot_width;
+    tas6754->audio_swap = audio_swap;
+    tas6754->ll_swap = ll_swap;
+    
+    return 0;
+}
 
-	/*
-	 * Determine the first slot and last slot that is being requested so
-	 * we'll be able to more easily enforce certain constraints as the
-	 * TAS6754's TDM interface is not fully configurable.
-	 */
-	first_slot = __ffs(tx_mask);
-	last_slot = __fls(rx_mask);
 
-	if (last_slot - first_slot != 4) {
-		dev_err(component->dev, "tdm mask must cover 4 contiguous slots\n");
-		return -EINVAL;
-	}
+/**
+ * tas6754_configure_low_latency
+ * @brief: Enables or disables the low latency channels in TDM mode
+ * and configures their offset.
+ * 
+ * @component: The component instance
+ * @enable: Whether to enable low latency channels
+ * @offset: Offset in SCLKs for low latency channels (0-511)
+ * 
+ * @return: Returns 0 on success, or a negative error code.
+ */
+static int tas6754_configure_low_latency(struct snd_soc_component *component,
+                                       bool enable, unsigned int offset)
+{
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    u8 offset_msb;
+    int ret;
+    
+    /* Validate offset */
+    if (offset > 511) {
+        dev_err(component->dev, "Invalid low latency offset: %u (max 511)\n", offset);
+        return -EINVAL;
+    }
+    
+    /* Enable/disable low latency channels */
+    ret = snd_soc_component_write(component, TAS6754_LL_EN, enable ? 0x0F : 0x00);
+    if (ret < 0)
+        return ret;
+    
+    /* Store the settings */
+    tas6754->ll_enabled = enable;
+    tas6754->ll_offset = offset;
+    
+    /* If TDM mode is active, update the offset registers */
+    if (tas6754->tdm_mode) {
+        /* Read current offset MSB register */
+        ret = snd_soc_component_read(component, TAS6754_SDIN_OFFSET_MSB, &offset_msb);
+        if (ret < 0)
+            return ret;
+        
+        /* Update LL offset MSB (bits 8-9) in bits 5-4 of SDIN_OFFSET_MSB */
+        offset_msb &= ~(0x30); /* Clear bits 5-4 */
+        offset_msb |= ((offset >> 8) & 0x03) << 4;
+        
+        /* Write updated offset MSB register */
+        ret = snd_soc_component_write(component, TAS6754_SDIN_OFFSET_MSB, offset_msb);
+        if (ret < 0)
+            return ret;
+        
+        /* Write LL offset LSB register */
+        ret = snd_soc_component_write(component, TAS6754_SDIN_LL_OFFSET, offset & 0xFF);
+        if (ret < 0)
+            return ret;
+    }
+    
+    return 0;
+}
 
-	switch (first_slot) {
-	case 0:
-		sap_tdm_slot_last = false;
-		break;
-	case 4:
-		sap_tdm_slot_last = true;
-		break;
-	default:
-		dev_err(component->dev, "tdm mask must start at slot 0 or 4\n");
-		return -EINVAL;
-	}
+/**
+ * tas6754_configure_sdin2
+ * @brief: Configures one of the GPIO pins as SDIN2 for receiving
+ * audio data for channels 3 and 4 in I2S mode or as an alternative
+ * input in TDM mode.
+ * 
+ * @component: The component instance
+ * @gpio_num: GPIO number to use (1 or 2) 
+ *
+ * @return: Returns 0 on success, or a negative error code.
+ */
+static int tas6754_configure_sdin2(struct snd_soc_component *component, int gpio_num)
+{
+    u8 gpio_input_sdin2 = 0;
+    u8 gpio_ctrl;
+    int ret;
+    
+    /* Read current GPIO_CTRL register value */
+    ret = snd_soc_component_read(component, TAS6754_GPIO_CTRL, &gpio_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    /* Select which GPIO to use as SDIN2 */
+    switch (gpio_num) {
+    case 1:
+        gpio_input_sdin2 |= TAS6754_GPIO_INPUT_SDIN2_GPIO1; /* GPIO1 as SDIN2 */
+        /* Set GPIO1 as input */
+        gpio_ctrl &= ~(0x01 << 7);
+        break;
+    case 2:
+        gpio_input_sdin2 |= TAS6754_GPIO_INPUT_SDIN2_GPIO2; /* GPIO2 as SDIN2 */
+        /* Set GPIO2 as input */
+        gpio_ctrl &= ~(0x01 << 6);
+        break;
+    default:
+        dev_err(component->dev, "Invalid GPIO number for SDIN2: %d\n", gpio_num);
+        return -EINVAL;
+    }
+    
+    /* Write GPIO_INPUT_SDIN2 register */
+    ret = snd_soc_component_write(component, TAS6754_GPIO_INPUT_SDIN2, gpio_input_sdin2);
+    if (ret < 0)
+        return ret;
+    
+    /* Write updated GPIO_CTRL register */
+    ret = snd_soc_component_write(component, TAS6754_GPIO_CTRL, gpio_ctrl);
+    if (ret < 0)
+        return ret;
+    
+    return 0;
+}
 
-	/* Configure TDM slot selection */
-	ret = snd_soc_component_update_bits(component, TAS6754_SAP_CTRL, 
-			    TAS6754_SAP_TDM_SLOT_LAST,
-			    sap_tdm_slot_last ? TAS6754_SAP_TDM_SLOT_LAST : 0);
-	if (ret < 0) {
-		dev_err(component->dev, "failed to update TDM slot selection: %d\n", ret);
-		return ret;
-	}
 
-	/* Configure TDM slot width */
-	switch (slot_width) {
-	case 16:
-		tdm_config |= TAS6754_TDM_SLOT_WIDTH_16;
-		break;
-	case 24:
-		tdm_config |= TAS6754_TDM_SLOT_WIDTH_24;
-		break;
-	case 32:
-		tdm_config |= TAS6754_TDM_SLOT_WIDTH_32;
-		break;
-	default:
-		dev_err(component->dev, "unsupported TDM slot width: %d\n", slot_width);
-		return -EINVAL;
-	}
+/* ALSA Controls for Low Latency Configuration */
 
-	/* Configure total number of TDM slots */
-	switch (slots) {
-	case 4:
-		tdm_config |= TAS6754_TDM_SLOTS_4;
-		break;
-	case 8:
-		tdm_config |= TAS6754_TDM_SLOTS_8;
-		break;
-	case 12:
-		tdm_config |= TAS6754_TDM_SLOTS_12;
-		break;
-	case 16:
-		tdm_config |= TAS6754_TDM_SLOTS_16;
-		break;
-	default:
-		dev_err(component->dev, "unsupported number of TDM slots: %d\n", slots);
-		return -EINVAL;
-	}
-
-	/* Update TDM configuration register */
-	ret = snd_soc_component_update_bits(component, TAS6754_SAP_CTRL,
-			    TAS6754_TDM_SLOT_WIDTH_MASK | TAS6754_TDM_SLOTS_MASK,
-			    tdm_config);
-	if (ret < 0) {
-		dev_err(component->dev, "failed to update TDM configuration: %d\n", ret);
-		return ret;
-	}
-
-	return 0;
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_low_latency_get(struct snd_kcontrol *kcontrol,
+                                 struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    
+    ucontrol->value.integer.value[0] = tas6754->ll_enabled ? 1 : 0;
+    
+    return 0;
+}
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_low_latency_put(struct snd_kcontrol *kcontrol,
+                                 struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    bool enable = !!ucontrol->value.integer.value[0];
+    int ret;
+    
+    if (tas6754->ll_enabled == enable)
+        return 0;
+    
+    ret = tas6754_configure_low_latency(component, enable, tas6754->ll_offset);
+    if (ret < 0)
+        return ret;
+    
+    return 1;
+}
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_ll_offset_get(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    
+    ucontrol->value.integer.value[0] = tas6754->ll_offset;
+    
+    return 0;
+}
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_ll_offset_put(struct snd_kcontrol *kcontrol,
+                               struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    unsigned int offset = ucontrol->value.integer.value[0];
+    int ret;
+    
+    if (offset > 511)
+        return -EINVAL;
+    
+    if (tas6754->ll_offset == offset)
+        return 0;
+    
+    tas6754->ll_offset = offset;
+    
+    if (tas6754->ll_enabled && tas6754->tdm_mode) {
+        ret = tas6754_configure_low_latency(component, true, offset);
+        if (ret < 0)
+            return ret;
+    }
+    
+    return 1;
 }
 
 
 
+//TODO: understand the purpose of this function and adapt as needed
+static const struct snd_kcontrol_new tas6754_snd_controls[] = {
+    SOC_SINGLE_BOOL_EXT("Low Latency Enable", 0,
+                       tas6754_low_latency_get, tas6754_low_latency_put),
+    SOC_SINGLE_EXT("Low Latency Offset", SND_SOC_NOPM, 0, 511, 0,
+                  tas6754_ll_offset_get, tas6754_ll_offset_put),
+    SOC_SINGLE_EXT("Audio Channel Swap", SND_SOC_NOPM, 0, 31, 0,//this option was added upon considering TAS6754_SDIN_CH_SWAP (0x2A), if too complex, remove it
+                  tas6754_audio_swap_get, tas6754_audio_swap_put),
+    SOC_SINGLE_EXT("Low Latency Channel Swap", SND_SOC_NOPM, 0, 7, 0,//this option was added upon considering TAS6754_SDIN_CH_SWAP (0x2A, if too complex, remove it
+                  tas6754_ll_swap_get, tas6754_ll_swap_put),
+    /* Other controls as before */
+};
+
+/* ALSA Controls for Low Latency Configuration */
 
 
+
+
+/* ALSA Controls for Channel Swap Configuration */
+
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_audio_swap_get(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    
+    ucontrol->value.integer.value[0] = tas6754->audio_swap;
+    
+    return 0;
+}
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_audio_swap_put(struct snd_kcontrol *kcontrol,
+                                struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    unsigned int val = ucontrol->value.integer.value[0];
+    u8 ch_swap;
+    int ret;
+    
+    if (val > 31)
+        return -EINVAL;
+    
+    if (tas6754->audio_swap == val)
+        return 0;
+    
+    tas6754->audio_swap = val;
+    
+    if (tas6754->tdm_mode) {
+        /* Update channel swap register */
+        ret = snd_soc_component_read(component, TAS6754_SDIN_CH_SWAP, &ch_swap);
+        if (ret < 0)
+            return ret;
+        
+        ch_swap &= 0xE0; /* Clear audio swap bits (4-0) */
+        ch_swap |= val & 0x1F;
+        
+        ret = snd_soc_component_write(component, TAS6754_SDIN_CH_SWAP, ch_swap);
+        if (ret < 0)
+            return ret;
+    }
+    
+    return 1;
+}
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_ll_swap_get(struct snd_kcontrol *kcontrol,
+                             struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    
+    ucontrol->value.integer.value[0] = tas6754->ll_swap;
+    
+    return 0;
+}
+//TODO: understand the purpose of this function and adapt as needed
+static int tas6754_ll_swap_put(struct snd_kcontrol *kcontrol,
+                             struct snd_ctl_elem_value *ucontrol)
+{
+    struct snd_soc_component *component = snd_soc_kcontrol_component(kcontrol);
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    unsigned int val = ucontrol->value.integer.value[0];
+    u8 ch_swap, offset_msb;
+    int ret;
+    
+    if (val > 7)
+        return -EINVAL;
+    
+    if (tas6754->ll_swap == val)
+        return 0;
+    
+    tas6754->ll_swap = val;
+    
+    if (tas6754->tdm_mode && tas6754->ll_enabled) {
+        /* Update channel swap register */
+        ret = snd_soc_component_read(component, TAS6754_SDIN_CH_SWAP, &ch_swap);
+        if (ret < 0)
+            return ret;
+        
+        ch_swap &= 0x1F; /* Clear LL swap bits (7-5) */
+        ch_swap |= (val & 0x07) << 5;
+        
+        ret = snd_soc_component_write(component, TAS6754_SDIN_CH_SWAP, ch_swap);
+        if (ret < 0)
+            return ret;
+        
+        /* Update LL CH SWAP MSB in SDIN_OFFSET_MSB register */
+        ret = snd_soc_component_read(component, TAS6754_SDIN_OFFSET_MSB, &offset_msb);
+        if (ret < 0)
+            return ret;
+        
+        /* Clear bits 3-2 (LL CH SWAP MSB) */
+        offset_msb &= ~(0x0C);
+        
+        /* Set LL CH SWAP MSB bits */
+        offset_msb |= ((val >> 2) & 0x01) << 3;  /* Bit 2 of val -> bit 3 of offset_msb */
+        offset_msb |= ((val >> 3) & 0x01) << 2;  /* Bit 3 of val -> bit 2 of offset_msb */
+        
+        ret = snd_soc_component_write(component, TAS6754_SDIN_OFFSET_MSB, offset_msb);
+        if (ret < 0)
+            return ret;
+    }
+    
+    return 1;
+}
+
+/* ALSA Controls for Channel Swap Configuration */
+
+
+
+
+
+
+/* TODO: double check how to implemente mute in tas6754 */
 static int tas6754_mute(struct snd_soc_dai *dai, int mute, int direction)
 {
 	struct snd_soc_component *component = dai->component;
@@ -368,6 +1082,11 @@ static int tas6754_mute(struct snd_soc_dai *dai, int mute, int direction)
 
 	return 0;
 }
+
+
+
+
+
 
 
 /**
@@ -514,22 +1233,22 @@ static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_
 }
 
 static struct snd_soc_component_driver soc_codec_dev_tas6754 = {
-	.set_bias_level		= tas6754_set_bias_level,
-	.controls			= tas6754_snd_controls,
+	.set_bias_level		= tas6754_set_bias_level,//ok
+	.controls			= tas6754_snd_controls,//pending
 	.num_controls		= ARRAY_SIZE(tas6754_snd_controls),
-	.dapm_widgets		= tas6754_dapm_widgets,
+	.dapm_widgets		= tas6754_dapm_widgets,//double check
 	.num_dapm_widgets	= ARRAY_SIZE(tas6754_dapm_widgets),
-	.dapm_routes		= tas6754_audio_map,
+	.dapm_routes		= tas6754_audio_map,//double check
 	.num_dapm_routes	= ARRAY_SIZE(tas6754_audio_map),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
 };
 
 static const struct snd_soc_dai_ops tas6754_speaker_dai_ops = {
-	.hw_params	= tas6754_hw_params,
-	.set_fmt	= tas6754_set_dai_fmt,
-	.set_tdm_slot	= tas6754_set_dai_tdm_slot,
-	.mute_stream	= tas6754_mute,
+	.hw_params	= tas6754_hw_params,//ok
+	.set_fmt	= tas6754_set_dai_fmt,//ok
+	.set_tdm_slot	= tas6754_set_dai_tdm_slot,//ok
+	.mute_stream	= tas6754_mute,//pending
 	.no_capture_mute = 1,
 };
 
@@ -1026,6 +1745,33 @@ static int tas6754_i2c_probe(struct i2c_client *client)
 	int ret;
 	int i;
 
+
+
+    /* TODO: Double check this -> Initialize audio interface settings */
+    tas6754->tdm_mode = false;
+    tas6754->dsp_a_mode = false;
+    tas6754->short_fsync = false;
+    tas6754->use_sdin2_for_ch34 = false;
+    tas6754->ll_enabled = false;
+    tas6754->bit_depth = 24;  /* Default bit depth */
+    tas6754->sample_rate = 0;
+    tas6754->channels = 0;
+    tas6754->channel_offset = 0;
+    tas6754->ll_offset = 96;  /* Default LL offset is 96 SCLKs */
+    tas6754->sdin2_gpio_num = 1;  /* Default to GPIO1 for SDIN2 */
+    tas6754->tdm_slots = 4;   /* Default to 4 TDM slots */
+    tas6754->tdm_slot_width = 24;  /* Default to 24-bit slots */
+    tas6754->audio_swap = 0;  /* Default audio channel mapping */
+    tas6754->ll_swap = 0;     /* Default LL channel mapping */
+
+
+
+
+
+
+
+
+
 	tas6754 = devm_kzalloc(dev, sizeof(*tas6754), GFP_KERNEL);
 	if (!tas6754)
 		return -ENOMEM;
@@ -1039,26 +1785,31 @@ static int tas6754_i2c_probe(struct i2c_client *client)
 		dev_err(dev, "unable to allocate register map: %d\n", ret);
 		return ret;
 	}
-	/* tas6754: Enables low power DEEP SLEEP state (active low), 
-				110kΩ internal pull-down resistor*/
-
-	/* tas6424: Enables low power standby state (active Low),
-				100-kΩ internal pulldown resistor */
 	
 	/*
-	 * Get control of the standby pin and set it LOW to take the codec
-	 * out of the stand-by mode.
-	 * Note: The actual pin polarity is taken care of in the GPIO lib
-	 * according the polarity specified in the DTS.
+	 * Get control of the PD pin and set it HIGH to take the codec
+	 * out of the standby.
 	 */
-	tas6754->standby_gpio = devm_gpiod_get_optional(dev, "standby",
-						      GPIOD_OUT_LOW);
-	if (IS_ERR(tas6754->standby_gpio)) {
-		if (PTR_ERR(tas6754->standby_gpio) == -EPROBE_DEFER)
+	tas6754->pd_gpio = devm_gpiod_get_optional(tas6754->dev, "pd", GPIOD_OUT_HIGH);
+	if (IS_ERR(tas6754->pd_gpio)) {
+		if (PTR_ERR(tas6754->pd_gpio) == -EPROBE_DEFER)
 			return -EPROBE_DEFER;
-		dev_info(dev, "failed to get standby GPIO: %ld\n",
-			PTR_ERR(tas6754->standby_gpio));
-		tas6754->standby_gpio = NULL;
+		dev_info(dev, "failed to get PD GPIO: %ld\n",
+			PTR_ERR(tas6754->pd_gpio));
+		tas6754->pd_gpio = NULL;
+	}
+
+	/*
+	 * Get control of the STBY pin and set it LOW to take the codec
+	 * out of the standby mode (DEEP SLEEP mode).
+	 */
+	tas6754->stby_gpio = devm_gpiod_get_optional(tas6754->dev, "standby", GPIOD_OUT_HIGH);
+	if (IS_ERR(tas6754->stby_gpio)) {
+		if (PTR_ERR(tas6754->stby_gpio) == -EPROBE_DEFER)
+			return -EPROBE_DEFER;
+		dev_info(dev, "failed to get STBY GPIO: %ld\n",
+			PTR_ERR(tas6754->stby_gpio));
+		tas6754->stby_gpio = NULL;
 	}
 
 
@@ -1072,12 +1823,14 @@ static int tas6754_i2c_probe(struct i2c_client *client)
 	 */
 	tas6754->mute_gpio = devm_gpiod_get_optional(dev, "mute",
 						      GPIOD_OUT_HIGH);
-	if (IS_ERR(tas6754->mute_gpio)) {
-		if (PTR_ERR(tas6754->mute_gpio) == -EPROBE_DEFER)
+	
+	tas6754->pd_gpio = devm_gpiod_get_optional(tas6754->dev, "pd", GPIOD_OUT_HIGH);							  
+	if (IS_ERR(tas6754->pd_gpio)) {
+		if (PTR_ERR(tas6754->pd_gpio) == -EPROBE_DEFER)
 			return -EPROBE_DEFER;
-		dev_info(dev, "failed to get nmute GPIO: %ld\n",
-			PTR_ERR(tas6754->mute_gpio));
-		tas6754->mute_gpio = NULL;
+		dev_info(dev, "failed to get PD GPIO: %ld\n",
+			PTR_ERR(tas6754->pd_gpio));
+		tas6754->pd_gpio = NULL;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(tas6754->supplies); i++)
