@@ -26,7 +26,12 @@
 #include "tas6754.h"
 
 /* Define how often to check (and clear) the fault status register (in ms) */
-#define TAS6754_FAULT_CHECK_INTERVAL 200
+#define TAS6754_FAULT_CHECK_50MS 	 	(50)
+#define TAS6754_FAULT_CHECK_100MS 	 	(100)
+#define TAS6754_FAULT_CHECK_200MS 	 	(200)
+#define TAS6754_FAULT_CHECK_300MS 	 	(300)
+#define TAS6754_FAULT_CHECK_500MS 	 	(500)
+#define TAS6754_FAULT_CHECK_INTERVAL 	TAS6754_FAULT_CHECK_200MS
 
 /* Order of array elements for supplies follows power-down sequence from datasheet, which is recommended to disable PVDD and VBAT first, then DVDD */
 static const char * const tas6754_supply_names[] = {
@@ -101,6 +106,39 @@ static const struct snd_kcontrol_new tas6754_snd_controls[] = {
 			  TAS6754_LDGBYPASS_SHIFT, 1),
 };*/
 
+
+/**
+ * TODO:
+ * Ensure tas6754_dac_event function properly manages the power states and fault handling for the TAS6754
+ * 		OK- default fault handling capabilities are implemented.
+ * 		PENDING - Optionally add more fault types monitoring as required.
+ * 		PENDING - Double check if power states management are correctly implemented or is missing.
+ */
+ /**
+ * tas6754_dac_event - DAPM event handler for TAS6754 DAC widgets
+ * @brief: Handles power management events for the TAS6754 DAC widgets.
+ * 		   It manages the amplifier's power state transitions and fault monitoring system.
+ * @w: The DAPM widget
+ * @kcontrol: The mixer control that triggered the event
+ * @event: The DAPM event type (e.g., SND_SOC_DAPM_POST_PMU or SND_SOC_DAPM_PRE_PMD)
+ *
+ * On power-up (SND_SOC_DAPM_POST_PMU):
+ * - Waits 12ms for the codec to stabilize after shutdown-to-active transition
+ * - Resets all fault status tracking variables
+ * - Initiates periodic fault checking by scheduling the fault_check_work
+ *
+ * On power-down (SND_SOC_DAPM_PRE_PMD):
+ * - Disables the periodic fault checking by canceling the fault_check_work
+ *
+ * The fault monitoring system tracks various fault conditions including:
+ * - Over-current and DC faults
+ * - Power supply faults
+ * - Over-temperature conditions
+ * - Current boost converter faults/warnings
+ * - Real-time load diagnostics, open load, and short load faults
+ *
+ * @return: Return 0 on success, negative error code on failure
+ */
 static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
 			     struct snd_kcontrol *kcontrol, int event)
 {
@@ -109,18 +147,38 @@ static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
 
 	dev_dbg(component->dev, "%s() event=0x%0x\n", __func__, event);
 
+	/* On Power-Up (POST_PMU) */
 	if (event & SND_SOC_DAPM_POST_PMU) {
-		/* Observe codec shutdown-to-active time */
+		/* Observe codec shutdown-to-active time 
+		   Waits 12ms after power-up.*/
 		msleep(12);
 
-		/* Turn on TAS6754 periodic fault checking/handling */
+		/** 
+		* Turn on TAS6754 periodic fault checking/handling
+		* By default the TAS6754 FAULT pin reports fault events and is active low under any of the following conditions:
+		*   - Overtemperature shutdown (OTSD) - Latching and non-latching
+		*   - Overcurrent Limit and Shutdown events - Latching
+		*   - DC Detect - Latching 
+		*/
 		tas6754->last_oc_dc_fault = 0;
 		tas6754->last_power_fault = 0;
 		tas6754->last_ot_fault = 0;
 		tas6754->last_cbc_fault_warn = 0;
 		tas6754->last_rtldg_ol_sl_fault = 0;
+		/**
+		* TODO:
+		* @ref: TRM[4.3.7.1 FAULT Pin, p-50]
+		* Additional fault events can be assigned to be reported by the TAS6754 FAULT pin. These include:
+		*   - Power Faults - Latching and non-latching
+		*   - DC Load Diagnostic faults
+		*   - Real-time Load Diagnostic reports - Latching and non-latching
+		*   - Clock Errors - Latching
+		*   - Charge Pump faults - Latching and non-latching
+		*   - Warning events
+		*/
 		schedule_delayed_work(&tas6754->fault_check_work,
 				      msecs_to_jiffies(TAS6754_FAULT_CHECK_INTERVAL));
+	/* On Power-Down (PRE_PMD) */
 	} else if (event & SND_SOC_DAPM_PRE_PMD) {
 		/* Disable TAS6754 periodic fault checking/handling */
 		cancel_delayed_work_sync(&tas6754->fault_check_work);
@@ -129,18 +187,299 @@ static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
 	return 0;
 }
 
+/**
+ * TAS6754 Channel Mapping Configuration Options
+ *
+ * This array defines the text labels for the 24 predefined channel mapping configurations
+ * available in the TAS6754 amplifier. Each configuration represents a specific routing
+ * pattern between input slots and output channels, as defined in the TAS6754 datasheet.
+ *
+ * These configurations are controlled by the SDIN_CH_SWAP register (Address = 0x2A),
+ * bits 0-4, which can be set to values 0-23 to select different mapping patterns.
+ *
+ * The mapping configurations are as follows:
+ *
+ * - "Config 0 (1-2-3-4)": Default mapping
+ *   Slot 1 → Channel 1, Slot 2 → Channel 2, Slot 3 → Channel 3, Slot 4 → Channel 4
+ *
+ * - "Config 1 (1-2-4-3)": Rear channels swapped
+ *   Slot 1 → Channel 1, Slot 2 → Channel 2, Slot 3 → Channel 4, Slot 4 → Channel 3
+ *
+ * - "Config 2 (1-3-2-4)": Middle channels swapped
+ *   Slot 1 → Channel 1, Slot 2 → Channel 3, Slot 3 → Channel 2, Slot 4 → Channel 4
+ *
+ * [... continues through all 24 configurations ...]
+ *
+ * - "Config 23 (4-3-1-2)": Complex rearrangement
+ *   Slot 1 → Channel 4, Slot 2 → Channel 3, Slot 3 → Channel 1, Slot 4 → Channel 2
+ *
+ * These predefined configurations enable:
+ *
+ * 1. Easy selection of common channel mapping patterns
+ * 2. Quick switching between different speaker configurations
+ * 3. Support for various audio routing scenarios:
+ *    - Standard stereo (left-right)
+ *    - Reversed stereo (right-left)
+ *    - Front-rear speaker arrangements
+ *    - Custom channel arrangements for specific applications
+ *
+ * The configurations are exposed to user applications through an ALSA enumeration
+ * control, allowing selection of the desired mapping pattern without having to
+ * individually configure each channel's source.
+ *
+ * This approach provides a balance between flexibility and ease of use, allowing
+ * both simple selection of common patterns and detailed customization when needed.
+ */
+static const char * const tas6754_ch_map_config_text[] = {
+    "Config 0", "Config 1", "Config 2", "Config 3", "Config 4", "Config 5",
+    "Config 6", "Config 7", "Config 8", "Config 9", "Config 10", "Config 11",
+    "Config 12", "Config 13", "Config 14", "Config 15", "Config 16", "Config 17",
+    "Config 18", "Config 19", "Config 20", "Config 21", "Config 22", "Config 23"
+};
+
+static const struct soc_enum tas6754_ch_map_config_enum =
+    SOC_ENUM_SINGLE(TAS6754_SDIN_CH_SWAP, 0, 24, tas6754_ch_map_config_text);
+
+/**
+ * tas6754_dapm_widgets[]
+ * @brief: This array defines the audio signal path through the TAS6754 Class-D amplifier using the
+ * ALSA DAPM (Dynamic Audio Power Management) framework. The widgets represent the
+ * functional blocks in the audio path from digital input to analog output, with per-channel
+ * processing capabilities.*/
 static const struct snd_soc_dapm_widget tas6754_dapm_widgets[] = {
-	SND_SOC_DAPM_AIF_IN("DAC IN", "Playback", 0, SND_SOC_NOPM, 0, 0),
-	SND_SOC_DAPM_DAC_E("DAC", NULL, SND_SOC_NOPM, 0, 0, tas6754_dac_event,
-			   SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
-	SND_SOC_DAPM_OUTPUT("OUT")
+    /* Digital Input */
+    SND_SOC_DAPM_AIF_IN("AIF IN", "Playback", 0, SND_SOC_NOPM, 0, 0),
+    
+    /* Channel Mapping */
+    SND_SOC_DAPM_MUX("CH1 Map", SND_SOC_NOPM, 0, 0, &tas6754_ch1_mux),
+    SND_SOC_DAPM_MUX("CH2 Map", SND_SOC_NOPM, 0, 0, &tas6754_ch2_mux),
+    SND_SOC_DAPM_MUX("CH3 Map", SND_SOC_NOPM, 0, 0, &tas6754_ch3_mux),
+    SND_SOC_DAPM_MUX("CH4 Map", SND_SOC_NOPM, 0, 0, &tas6754_ch4_mux),
+    
+	/* DSP Processing (without an event handler)*/
+	SND_SOC_DAPM_DSP("DSP", SND_SOC_NOPM, 0, 0, NULL),
+
+    /**
+     * @TODO:
+	 * tas6754_dsp_event - Handler to manage power sequencing
+	 * Check if a DSP event handler tas6754_dsp_event is needed for specific power management or configuration tasks 
+	 * or we can reuse the existing handler tas6754_dac_event? 
+	 * Check is we can use the same event handler, the existing tas6754_dac_event function for both the 
+	 * DAC and DSP widgets?
+	 * separate handler implementation is better? Yes, to keep things modular.
+	 */
+     /* SND_SOC_DAPM_DSP_E("DSP", SND_SOC_NOPM, 0, 0, NULL, 0,
+                     tas6754_dsp_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),*/
+    
+    /* Volume Controls */
+    SND_SOC_DAPM_PGA("CH1 Volume", SND_SOC_NOPM, 0, 0, NULL, 0),
+    SND_SOC_DAPM_PGA("CH2 Volume", SND_SOC_NOPM, 0, 0, NULL, 0),
+    SND_SOC_DAPM_PGA("CH3 Volume", SND_SOC_NOPM, 0, 0, NULL, 0),
+    SND_SOC_DAPM_PGA("CH4 Volume", SND_SOC_NOPM, 0, 0, NULL, 0),
+    
+    /* DACs (Digital to PWM) */
+    SND_SOC_DAPM_DAC_E("CH1 DAC", NULL, SND_SOC_NOPM, 0, 0,
+                     tas6754_dac_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+    SND_SOC_DAPM_DAC_E("CH2 DAC", NULL, SND_SOC_NOPM, 0, 0,
+                     tas6754_dac_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+    SND_SOC_DAPM_DAC_E("CH3 DAC", NULL, SND_SOC_NOPM, 0, 0,
+                     tas6754_dac_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+    SND_SOC_DAPM_DAC_E("CH4 DAC", NULL, SND_SOC_NOPM, 0, 0,
+                     tas6754_dac_event, SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+    
+    /* Output Drivers */
+    SND_SOC_DAPM_OUT_DRV("CH1 DRV", SND_SOC_NOPM, 0, 0, NULL, 0),
+    SND_SOC_DAPM_OUT_DRV("CH2 DRV", SND_SOC_NOPM, 0, 0, NULL, 0),
+    SND_SOC_DAPM_OUT_DRV("CH3 DRV", SND_SOC_NOPM, 0, 0, NULL, 0),
+    SND_SOC_DAPM_OUT_DRV("CH4 DRV", SND_SOC_NOPM, 0, 0, NULL, 0),
+    
+    /* Outputs */
+    SND_SOC_DAPM_OUTPUT("OUT1"),
+    SND_SOC_DAPM_OUTPUT("OUT2"),
+    SND_SOC_DAPM_OUTPUT("OUT3"),
+    SND_SOC_DAPM_OUTPUT("OUT4")
 };
 
+/**
+ * TAS6754 Channel Mapping Text Options
+ *
+ * This array defines the text labels for the input slot options available in the
+ * channel mapping controls of the TAS6754 Class-D amplifier. These labels represent the
+ * possible audio sources that can be routed to each amplifier channel through
+ * the DAPM MUX widgets.
+ *
+ * The array includes two categories of input slots:
+ *
+ * 1. Standard Audio Slots (1-4):
+ *    - "Slot 1": First slot in the I2S/TDM frame, typically left front channel
+ *    - "Slot 2": Second slot in the I2S/TDM frame, typically right front channel
+ *    - "Slot 3": Third slot in the I2S/TDM frame, typically left rear channel
+ *    - "Slot 4": Fourth slot in the I2S/TDM frame, typically right rear channel
+ *
+ * 2. Low Latency Slots (5-8):
+ *    - "LL Slot 5": First low latency slot in the TDM frame
+ *    - "LL Slot 6": Second low latency slot in the TDM frame
+ *    - "LL Slot 7": Third low latency slot in the TDM frame
+ *    - "LL Slot 8": Fourth low latency slot in the TDM frame
+ *
+ * These text labels are used in several contexts:
+ *
+ * - As options in the ALSA mixer controls for channel mapping
+ * - As connection identifiers in the DAPM audio map
+ * - In user interfaces like alsamixer to display available routing options
+ *
+ * The flexible routing enabled by these options allows:
+ * - Any input slot to be routed to any amplifier channel
+ * - Support for both standard and low latency audio paths
+ * - Dynamic reconfiguration of the audio routing at runtime
+ * - Implementation of various channel mapping scenarios (stereo, quad, etc.)
+ *
+ * When used with the channel mapping MUX widgets, these options create a
+ * fully configurable routing matrix between input slots and output channels.
+ */
+static const char * const tas6754_ch_map_text[] = {
+    "Slot 1", "Slot 2", "Slot 3", "Slot 4",
+    "LL Slot 5", "LL Slot 6", "LL Slot 7", "LL Slot 8"
+};
+
+static const struct soc_enum tas6754_ch1_map_enum =
+    SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, ARRAY_SIZE(tas6754_ch_map_text), tas6754_ch_map_text);
+static const struct soc_enum tas6754_ch2_map_enum =
+    SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, ARRAY_SIZE(tas6754_ch_map_text), tas6754_ch_map_text);
+static const struct soc_enum tas6754_ch3_map_enum =
+    SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, ARRAY_SIZE(tas6754_ch_map_text), tas6754_ch_map_text);
+static const struct soc_enum tas6754_ch4_map_enum =
+    SOC_ENUM_SINGLE(SND_SOC_NOPM, 0, ARRAY_SIZE(tas6754_ch_map_text), tas6754_ch_map_text);
+
+static const struct snd_kcontrol_new tas6754_ch1_mux =
+    SOC_DAPM_ENUM("CH1 Source", tas6754_ch1_map_enum);
+static const struct snd_kcontrol_new tas6754_ch2_mux =
+    SOC_DAPM_ENUM("CH2 Source", tas6754_ch2_map_enum);
+static const struct snd_kcontrol_new tas6754_ch3_mux =
+    SOC_DAPM_ENUM("CH3 Source", tas6754_ch3_map_enum);
+static const struct snd_kcontrol_new tas6754_ch4_mux =
+    SOC_DAPM_ENUM("CH4 Source", tas6754_ch4_map_enum);
+
+/**
+ * TAS6754 DAPM Audio Map
+ *
+ * This array defines the connections between the DAPM widgets in the TAS6754 Class-D amplifier's
+ * audio signal path. Each entry represents a connection from a source widget to a sink
+ * widget, optionally with a control that enables/disables the connection.
+ *
+ * The audio map creates a complete directed graph of the audio signal flow from input
+ * to output, with the following key sections:
+ *
+ * 1. Input to Channel Mapping Connections:
+ *    These connections define how input audio slots from the digital interface (AIF IN)
+ *    can be routed to each amplifier channel. The flexible routing allows:
+ *    - Any input slot (1-4) to be routed to any amplifier channel (1-4)
+ *    - Low latency slots (5-8) to be routed to any amplifier channel
+ *    - Each amplifier channel to select its input source independently
+ *    - Dynamic switching between different input sources via ALSA controls
+ *
+ *    For example: {"CH1 Map", "Slot 2", "AIF IN"} creates a connection from the
+ *    digital input (AIF IN) to channel 1's input selector (CH1 Map), when "Slot 2"
+ *    is selected as the source.
+ *
+ * 2. DSP Processing Connections:
+ *    These connections route the mapped input signals to the DSP processing block,
+ *    which handles digital audio processing for all channels.
+ *
+ * 3. Volume Control Connections:
+ *    These connections route the processed audio from the DSP to individual volume
+ *    controls for each channel, enabling independent volume adjustment.
+ *
+ * 4. DAC Connections:
+ *    These connections route the volume-adjusted signals to the Digital-to-PWM
+ *    converters for each channel, which transform the digital audio into PWM signals
+ *    for Class-D amplification.
+ *
+ * 5. Output Driver Connections:
+ *    These connections route the PWM signals to the output driver stages, which
+ *    include the gate drivers and power FETs for each channel.
+ *
+ * 6. Output Connections:
+ *    These connections route the amplified signals to the physical output pins
+ *    of the TAS6754 amplifier.
+ *
+ * The complete audio path for each channel is:
+ * AIF IN → CHx Map → DSP → CHx Volume → CHx DAC → CHx DRV → OUTx
+ *
+ * This flexible routing architecture allows for:
+ * - Dynamic channel mapping through ALSA controls
+ * - Independent processing and volume control for each channel
+ * - Support for both regular and low latency audio paths
+ * - Proper power sequencing through the DAPM framework
+ */
 static const struct snd_soc_dapm_route tas6754_audio_map[] = {
-	{ "DAC", NULL, "DAC IN" },
-	{ "OUT", NULL, "DAC" },
+    /* Input to Channel Mapping */
+    {"CH1 Map", "Slot 1", "AIF IN"},
+    {"CH1 Map", "Slot 2", "AIF IN"},
+    {"CH1 Map", "Slot 3", "AIF IN"},
+    {"CH1 Map", "Slot 4", "AIF IN"},
+    {"CH1 Map", "LL Slot 5", "AIF IN"},
+    {"CH1 Map", "LL Slot 6", "AIF IN"},
+    {"CH1 Map", "LL Slot 7", "AIF IN"},
+    {"CH1 Map", "LL Slot 8", "AIF IN"},
+    
+    {"CH2 Map", "Slot 1", "AIF IN"},
+    {"CH2 Map", "Slot 2", "AIF IN"},
+    {"CH2 Map", "Slot 3", "AIF IN"},
+    {"CH2 Map", "Slot 4", "AIF IN"},
+    {"CH2 Map", "LL Slot 5", "AIF IN"},
+    {"CH2 Map", "LL Slot 6", "AIF IN"},
+    {"CH2 Map", "LL Slot 7", "AIF IN"},
+    {"CH2 Map", "LL Slot 8", "AIF IN"},
+    
+    {"CH3 Map", "Slot 1", "AIF IN"},
+    {"CH3 Map", "Slot 2", "AIF IN"},
+    {"CH3 Map", "Slot 3", "AIF IN"},
+    {"CH3 Map", "Slot 4", "AIF IN"},
+    {"CH3 Map", "LL Slot 5", "AIF IN"},
+    {"CH3 Map", "LL Slot 6", "AIF IN"},
+    {"CH3 Map", "LL Slot 7", "AIF IN"},
+    {"CH3 Map", "LL Slot 8", "AIF IN"},
+    
+    {"CH4 Map", "Slot 1", "AIF IN"},
+    {"CH4 Map", "Slot 2", "AIF IN"},
+    {"CH4 Map", "Slot 3", "AIF IN"},
+    {"CH4 Map", "Slot 4", "AIF IN"},
+    {"CH4 Map", "LL Slot 5", "AIF IN"},
+    {"CH4 Map", "LL Slot 6", "AIF IN"},
+    {"CH4 Map", "LL Slot 7", "AIF IN"},
+    {"CH4 Map", "LL Slot 8", "AIF IN"},
+    
+    /* DSP Processing */
+    {"DSP", NULL, "CH1 Map"},
+    {"DSP", NULL, "CH2 Map"},
+    {"DSP", NULL, "CH3 Map"},
+    {"DSP", NULL, "CH4 Map"},
+    
+    /* Volume Controls */
+    {"CH1 Volume", NULL, "DSP"},
+    {"CH2 Volume", NULL, "DSP"},
+    {"CH3 Volume", NULL, "DSP"},
+    {"CH4 Volume", NULL, "DSP"},
+    
+    /* DACs */
+    {"CH1 DAC", NULL, "CH1 Volume"},
+    {"CH2 DAC", NULL, "CH2 Volume"},
+    {"CH3 DAC", NULL, "CH3 Volume"},
+    {"CH4 DAC", NULL, "CH4 Volume"},
+    
+    /* Output Drivers */
+    {"CH1 DRV", NULL, "CH1 DAC"},
+    {"CH2 DRV", NULL, "CH2 DAC"},
+    {"CH3 DRV", NULL, "CH3 DAC"},
+    {"CH4 DRV", NULL, "CH4 DAC"},
+    
+    /* Outputs */
+    {"OUT1", NULL, "CH1 DRV"},
+    {"OUT2", NULL, "CH2 DRV"},
+    {"OUT3", NULL, "CH3 DRV"},
+    {"OUT4", NULL, "CH4 DRV"}
 };
-
 
 /**
  * tas6754_hw_params
@@ -748,7 +1087,6 @@ static int tas6754_configure_tdm(struct snd_soc_component *component,
     return 0;
 }
 
-
 /**
  * tas6754_configure_low_latency
  * @brief: Enables or disables the low latency channels in TDM mode
@@ -1040,8 +1378,53 @@ static int tas6754_ll_swap_put(struct snd_kcontrol *kcontrol,
 
 
 /**
- * @brief: ALSA Controls for TAS6754
- * 
+ * TAS6754 ALSA Controls
+ *
+ * This array defines the mixer controls exposed to user applications through the ALSA
+ * framework. These controls allow configuration of various aspects of the TAS6754
+ * Class-D amplifier, including volume levels, diagnostics features, and channel mapping.
+ *
+ * Control Categories:
+ *
+ * 1. Volume Controls:
+ *    Per-channel digital volume controls with TLV (Threshold Limit Value) scaling.
+ *    - Range: 0 dB (maximum volume) to -103 dB (minimum volume), plus mute
+ *    - Step size: 0.5 dB
+ *    - Each channel can be independently controlled
+ *    - TLV scaling ensures proper dB representation in ALSA applications
+ *
+ * 2. DC Load Diagnostics Controls:
+ *    Controls for the amplifier's built-in diagnostic capabilities.
+ *    - Auto DC Diagnostics: Enables/disables automatic diagnostics after faults
+ *    - Short/Open Load Detection: Enables/disables detection of shorted/open loads
+ *    - Bypass Diagnostic Wait Loop: Controls waiting behavior during diagnostics
+ *    - Diagnostic Buffer Wait Time: Sets buffer wait time (1ms, 2ms, 5ms, or 10ms)
+ *    - Abort Diagnostics: Momentary control to abort an ongoing diagnostic operation
+ *
+ * 3. Line-Out Detection Controls:
+ *    Per-channel controls for detecting line-out (headphone) connections.
+ *    - Enables DC Load Diagnostics to check for line-out loads on each channel
+ *    - Useful for automatic switching between speaker and headphone modes
+ *    - Can be independently enabled for each channel
+ *
+ * 4. Low Latency Configuration:
+ *    Controls for the TAS6754's low latency audio path.
+ *    - Low Latency Enable: Activates the separate low latency signal path
+ *    - Low Latency Offset: Sets the offset (in SCLKs) for low latency channels
+ *
+ * 5. Channel Mapping Configuration:
+ *    Controls for flexible routing between input slots and output channels.
+ *    - Audio Channel Swap: Configures the mapping between input slots and output channels
+ *    - Low Latency Channel Swap: Configures mapping for low latency channels
+ *    - Channel Mapping Config: Selects from 24 predefined mapping configurations
+ *    - LL Channel Mapping Config: Selects mapping configuration for low latency channels
+ *
+ * Implementation Notes:
+ * - Some controls use inverted logic (TAS6754_INVERT_CONTROL) where the register bit
+ *   meaning is opposite to the intuitive control behavior
+ * - Extended controls (SOC_SINGLE_EXT) use custom get/put handlers for complex operations
+ * - The STROBE control (Abort Diagnostics) automatically returns to inactive state
+ * - TLV controls provide proper dB scaling for volume controls in ALSA applications
  */
 static const struct snd_kcontrol_new tas6754_snd_controls[] = {
 	/* ALSA Controls for Volume Controls */
@@ -1082,11 +1465,16 @@ static const struct snd_kcontrol_new tas6754_snd_controls[] = {
                   tas6754_ll_offset_get, tas6754_ll_offset_put),
 
 	/* ALSA Controls for Channel Swap Configuration */
-	/* These options were added upon considering register TAS6754_SDIN_CH_SWAP (0x2A), if too complex, remove them! */
     SOC_SINGLE_EXT("Audio Channel Swap", SND_SOC_NOPM, 0, 31, 0,
                   tas6754_audio_swap_get, tas6754_audio_swap_put),
     SOC_SINGLE_EXT("Low Latency Channel Swap", SND_SOC_NOPM, 0, 7, 0,
                   tas6754_ll_swap_get, tas6754_ll_swap_put),
+
+	/* ALSA Controls for Channel Mapping Configuration */
+    SOC_ENUM("Channel Mapping Config", tas6754_ch_map_config_enum),
+    
+    /* ALSA Controls for Low Latency Channel Mapping Configuration */
+    SOC_SINGLE("LL Channel Mapping Config", TAS6754_SDIN_CH_SWAP, 5, 7, 0),
 };
 
 
@@ -1269,9 +1657,9 @@ static struct snd_soc_component_driver soc_codec_dev_tas6754 = {
 	.set_bias_level		= tas6754_set_bias_level,//ok
 	.controls			= tas6754_snd_controls,//ok
 	.num_controls		= ARRAY_SIZE(tas6754_snd_controls),
-	.dapm_widgets		= tas6754_dapm_widgets,//double check
+	.dapm_widgets		= tas6754_dapm_widgets,//ok
 	.num_dapm_widgets	= ARRAY_SIZE(tas6754_dapm_widgets),
-	.dapm_routes		= tas6754_audio_map,//double check
+	.dapm_routes		= tas6754_audio_map,//ok
 	.num_dapm_routes	= ARRAY_SIZE(tas6754_audio_map),
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
