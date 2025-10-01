@@ -49,7 +49,7 @@ struct tas6754_data {
 	struct gpio_desc *pd_gpio;
     struct gpio_desc *stby_gpio;
 	//struct gpio_desc *mute_gpio;//TODO: Check mute handling via registers or GPIO additional config?
-	    
+
     /* Audio interface configuration (ENHANCED)*/
     bool tdm_mode;                		/* Whether in TDM mode */
     bool dsp_a_mode;              		/* Whether in DSP_A mode (needs 1-bit offset) */
@@ -77,11 +77,16 @@ struct tas6754_data {
 };
 
 /*
+ * DAC digital volumes. From 0 dB to -103 dB in -0.5 dB steps, plus a mute setting.
+ * Register values: 0x30 = 0dB, 0x31 = -0.5dB, ..., 0xFE = -103dB, 0xFF = Mute
+ */
+static DECLARE_TLV_DB_SCALE(dac_tlv, 0, -50, 1);
+/*
  * DAC digital volumes. From -103.5 to 24 dB in 0.5 dB steps. Note that
  * setting the gain below -100 dB (register value <0x7) is effectively a MUTE
  * as per device datasheet.
  */
-static DECLARE_TLV_DB_SCALE(dac_tlv, -10350, 50, 0);
+/*static DECLARE_TLV_DB_SCALE(dac_tlv, -10350, 50, 0);
 
 static const struct snd_kcontrol_new tas6754_snd_controls[] = {
 	SOC_SINGLE_TLV("Speaker Driver CH1 Playback Volume",
@@ -94,7 +99,7 @@ static const struct snd_kcontrol_new tas6754_snd_controls[] = {
 		       TAS6754_CH4_VOL_CTRL, 0, 0xff, 0, dac_tlv),
 	SOC_SINGLE_STROBE("Auto Diagnostics Switch", TAS6754_DC_DIAG_CTRL1,
 			  TAS6754_LDGBYPASS_SHIFT, 1),
-};
+};*/
 
 static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
 			     struct snd_kcontrol *kcontrol, int event)
@@ -922,26 +927,7 @@ static int tas6754_ll_offset_put(struct snd_kcontrol *kcontrol,
     
     return 1;
 }
-
-
-
-//TODO: understand the purpose of this function and adapt as needed
-static const struct snd_kcontrol_new tas6754_snd_controls[] = {
-    SOC_SINGLE_BOOL_EXT("Low Latency Enable", 0,
-                       tas6754_low_latency_get, tas6754_low_latency_put),
-    SOC_SINGLE_EXT("Low Latency Offset", SND_SOC_NOPM, 0, 511, 0,
-                  tas6754_ll_offset_get, tas6754_ll_offset_put),
-    SOC_SINGLE_EXT("Audio Channel Swap", SND_SOC_NOPM, 0, 31, 0,//this option was added upon considering TAS6754_SDIN_CH_SWAP (0x2A), if too complex, remove it
-                  tas6754_audio_swap_get, tas6754_audio_swap_put),
-    SOC_SINGLE_EXT("Low Latency Channel Swap", SND_SOC_NOPM, 0, 7, 0,//this option was added upon considering TAS6754_SDIN_CH_SWAP (0x2A, if too complex, remove it
-                  tas6754_ll_swap_get, tas6754_ll_swap_put),
-    /* Other controls as before */
-};
-
 /* ALSA Controls for Low Latency Configuration */
-
-
-
 
 /* ALSA Controls for Channel Swap Configuration */
 
@@ -1052,9 +1038,56 @@ static int tas6754_ll_swap_put(struct snd_kcontrol *kcontrol,
     return 1;
 }
 
-/* ALSA Controls for Channel Swap Configuration */
 
+/**
+ * @brief: ALSA Controls for TAS6754
+ * 
+ */
+static const struct snd_kcontrol_new tas6754_snd_controls[] = {
+	/* ALSA Controls for Volume Controls */
+    SOC_SINGLE_TLV("Speaker Driver CH1 Playback Volume",
+                  TAS6754_DIG_VOL_CH1, 0, TAS6754_DIG_VOL_CH1_MINUS_103DB_MIN, 0, dac_tlv),
+    SOC_SINGLE_TLV("Speaker Driver CH2 Playback Volume",
+                  TAS6754_DIG_VOL_CH2, 0, TAS6754_DIG_VOL_CH2_MINUS_103DB_MIN, 0, dac_tlv),
+    SOC_SINGLE_TLV("Speaker Driver CH3 Playback Volume",
+                  TAS6754_DIG_VOL_CH3, 0, TAS6754_DIG_VOL_CH3_MINUS_103DB_MIN, 0, dac_tlv),
+    SOC_SINGLE_TLV("Speaker Driver CH4 Playback Volume",
+                  TAS6754_DIG_VOL_CH4, 0, TAS6754_DIG_VOL_CH4_MINUS_103DB_MIN, 0, dac_tlv)
 
+    /* ALSA Controls for DC Load Diagnostics Controls */
+    SOC_SINGLE("Auto DC Diagnostics", TAS6754_DC_LDG_CTRL,
+              TAS6754_DC_LDG_BYPASS_SHIFT, 1, TAS6754_INVERT_CONTROL),
+    SOC_SINGLE("Short/Open Load Detection", TAS6754_DC_LDG_CTRL,
+              TAS6754_DC_LDG_SLOL_DISABLE_SHIFT, 1, TAS6754_INVERT_CONTROL),
+    SOC_SINGLE("Bypass Diagnostic Wait Loop", TAS6754_DC_LDG_CTRL,
+              TAS6754_DC_LDG_WAIT_BYPASS_SHIFT, 1, TAS6754_NORMAL_CONTROL),
+	SOC_ENUM("Diagnostic Buffer Wait Time", tas6754_ldg_buffer_wait_enum),	
+    SOC_SINGLE_STROBE("Abort Diagnostics", TAS6754_DC_LDG_CTRL,
+                     TAS6754_DC_LDG_ABORT_SHIFT, 1),
+    
+    /* ALSA Controls from Line-Out Detection Controls */
+    SOC_SINGLE("CH1 Line-Out Detection", TAS6754_DC_LDG_LO_CTRL,
+              TAS6754_CH1_LO_LDG_ENABLE_SHIFT, 1, TAS6754_NORMAL_CONTROL),
+    SOC_SINGLE("CH2 Line-Out Detection", TAS6754_DC_LDG_LO_CTRL,
+              TAS6754_CH2_LO_LDG_ENABLE_SHIFT, 1, TAS6754_NORMAL_CONTROL),
+    SOC_SINGLE("CH3 Line-Out Detection", TAS6754_DC_LDG_LO_CTRL,
+              TAS6754_CH3_LO_LDG_ENABLE_SHIFT, 1, TAS6754_NORMAL_CONTROL),
+    SOC_SINGLE("CH4 Line-Out Detection", TAS6754_DC_LDG_LO_CTRL,
+              TAS6754_CH4_LO_LDG_ENABLE_SHIFT, 1, TAS6754_NORMAL_CONTROL),
+
+    /* ALSA Controls for Low Latency Configuration */
+    SOC_SINGLE_BOOL_EXT("Low Latency Enable", 0,
+                       tas6754_low_latency_get, tas6754_low_latency_put),
+    SOC_SINGLE_EXT("Low Latency Offset", SND_SOC_NOPM, 0, 511, 0,
+                  tas6754_ll_offset_get, tas6754_ll_offset_put),
+
+	/* ALSA Controls for Channel Swap Configuration */
+	/* These options were added upon considering register TAS6754_SDIN_CH_SWAP (0x2A), if too complex, remove them! */
+    SOC_SINGLE_EXT("Audio Channel Swap", SND_SOC_NOPM, 0, 31, 0,
+                  tas6754_audio_swap_get, tas6754_audio_swap_put),
+    SOC_SINGLE_EXT("Low Latency Channel Swap", SND_SOC_NOPM, 0, 7, 0,
+                  tas6754_ll_swap_get, tas6754_ll_swap_put),
+};
 
 
 
@@ -1234,7 +1267,7 @@ static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_
 
 static struct snd_soc_component_driver soc_codec_dev_tas6754 = {
 	.set_bias_level		= tas6754_set_bias_level,//ok
-	.controls			= tas6754_snd_controls,//pending
+	.controls			= tas6754_snd_controls,//ok
 	.num_controls		= ARRAY_SIZE(tas6754_snd_controls),
 	.dapm_widgets		= tas6754_dapm_widgets,//double check
 	.num_dapm_widgets	= ARRAY_SIZE(tas6754_dapm_widgets),
@@ -1765,6 +1798,17 @@ static int tas6754_i2c_probe(struct i2c_client *client)
     tas6754->ll_swap = 0;     /* Default LL channel mapping */
 
 
+	/* Initialize DC Load Diagnostics */
+    dev_dbg(component->dev, "Initializing DC Load Diagnostics\n");
+    snd_soc_component_write(component, TAS6754_DC_LDG_CTRL, TAS6754_DC_LDG_CTRL_DEFAULT);
+    snd_soc_component_write(component, TAS6754_DC_LDG_LO_CTRL, TAS6754_DC_LDG_LO_CTRL_DEFAULT);
+
+	/* Initialize volumes to default moderate levels */
+    dev_dbg(component->dev, "Setting default volume levels to -20 dB\n");
+    snd_soc_component_write(component, TAS6754_DIG_VOL_CH1, TAS6754_DIG_VOL_CH1_DEFAULT);
+    snd_soc_component_write(component, TAS6754_DIG_VOL_CH2, TAS6754_DIG_VOL_CH2_DEFAULT);
+    snd_soc_component_write(component, TAS6754_DIG_VOL_CH3, TAS6754_DIG_VOL_CH3_DEFAULT);
+    snd_soc_component_write(component, TAS6754_DIG_VOL_CH4, TAS6754_DIG_VOL_CH4_DEFAULT);
 
 
 

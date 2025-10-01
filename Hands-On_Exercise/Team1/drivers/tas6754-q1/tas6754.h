@@ -613,18 +613,18 @@
 #define TAS6754_DIG_VOL_CH1_SHIFT                           (0)
 #define TAS6754_DIG_VOL_CH1_GET_VOL(val)                    ((val) & TAS6754_DIG_VOL_CH1_MASK)
 #define TAS6754_DIG_VOL_CH1_SET_VOL(val)                    ((val) & 0xFF)
-#define TAS6754_DIG_VOL_CH1_0DB                             (0x30)              /* 0.0 dB (Reset value) */
-#define TAS6754_DIG_VOL_CH1_MINUS_0_5DB                     (0x31)              /* -0.5 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_1DB                       (0x32)              /* -1.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_6DB                       (0x3C)              /* -6.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_12DB                      (0x48)              /* -12.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_20DB                      (0x58)              /* -20.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_40DB                      (0x80)              /* -40.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_60DB                      (0xA8)              /* -60.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_80DB                      (0xD0)              /* -80.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_100DB                     (0xF8)              /* -100.0 dB */
-#define TAS6754_DIG_VOL_CH1_MINUS_103DB                     (0xFE)              /* -103.0 dB */
-#define TAS6754_DIG_VOL_CH1_MUTE                            (0xFF)              /* Mute */
+#define TAS6754_DIG_VOL_CH1_0DB_MAX                         (0x30)                          /* 0 dB (maximum volume) */
+#define TAS6754_DIG_VOL_CH1_MINUS_20DB                      (0x58)                          /* -20 dB (moderate volume) */
+#define TAS6754_DIG_VOL_CH1_MINUS_30DB                      (0x6C)                          /* -30 dB (lower moderate volume) */
+#define TAS6754_DIG_VOL_CH1_DEFAULT                         TAS6754_DIG_VOL_CH1_MINUS_20DB  /* Default to a Moderate Volume (-20 dB)
+                                                                                                Pros:
+                                                                                                    Safe starting point that's still audible
+                                                                                                    Balances safety with usability
+                                                                                                    Common practice in audio systems
+                                                                                                Cons:
+                                                                                                    Users may need to adjust volume for optimal listening*/
+#define TAS6754_DIG_VOL_CH1_MINUS_103DB_MIN                 (0xFE)                          /* -103 dB (minimum volume) */
+#define TAS6754_DIG_VOL_CH1_MUTE                            (0xFF)                          /* Mute */
 #define TAS6754_DIG_VOL_CH1_DB_TO_REG(db)                   ((db <= 0) ? (0x30 - ((uint8_t)(-db * 2))) : 0x30)
 #define TAS6754_DIG_VOL_CH1_REG_TO_DB(reg)                  ((reg == 0xFF) ? -INFINITY : ((float)(0x30 - (reg)) / 2.0))
 /************************************************************************
@@ -634,18 +634,18 @@
 #define TAS6754_DIG_VOL_CH2_SHIFT                           (0)
 #define TAS6754_DIG_VOL_CH2_GET_VOL(val)                    ((val) & TAS6754_DIG_VOL_CH2_MASK)
 #define TAS6754_DIG_VOL_CH2_SET_VOL(val)                    ((val) & 0xFF)
-#define TAS6754_DIG_VOL_CH2_0DB                             (0x30)              /* 0.0 dB (Reset value) */
-#define TAS6754_DIG_VOL_CH2_MINUS_0_5DB                     (0x31)              /* -0.5 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_1DB                       (0x32)              /* -1.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_6DB                       (0x3C)              /* -6.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_12DB                      (0x48)              /* -12.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_20DB                      (0x58)              /* -20.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_40DB                      (0x80)              /* -40.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_60DB                      (0xA8)              /* -60.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_80DB                      (0xD0)              /* -80.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_100DB                     (0xF8)              /* -100.0 dB */
-#define TAS6754_DIG_VOL_CH2_MINUS_103DB                     (0xFE)              /* -103.0 dB */
-#define TAS6754_DIG_VOL_CH2_MUTE                            (0xFF)              /* Mute */
+#define TAS6754_DIG_VOL_CH2_0DB_MAX                         (0x30)                          /* 0 dB (maximum volume) */
+#define TAS6754_DIG_VOL_CH2_MINUS_20DB                      (0x58)                          /* -20 dB (moderate volume) */
+#define TAS6754_DIG_VOL_CH2_MINUS_30DB                      (0x6C)                          /* -30 dB (lower moderate volume) */
+#define TAS6754_DIG_VOL_CH2_DEFAULT                         TAS6754_DIG_VOL_CH1_MINUS_20DB  /* Default to a Moderate Volume (-20 dB)
+                                                                                                Pros:
+                                                                                                    Safe starting point that's still audible
+                                                                                                    Balances safety with usability
+                                                                                                    Common practice in audio systems
+                                                                                                Cons:
+                                                                                                    Users may need to adjust volume for optimal listening*/
+#define TAS6754_DIG_VOL_CH2_MINUS_103DB_MIN                 (0xFE)                          /* -103 dB (minimum volume) */
+#define TAS6754_DIG_VOL_CH2_MUTE                            (0xFF)                          /* Mute */
 #define TAS6754_DIG_VOL_CH2_DB_TO_REG(db)                   ((db <= 0) ? (0x30 - ((uint8_t)(-db * 2))) : 0x30)
 #define TAS6754_DIG_VOL_CH2_REG_TO_DB(reg)                  ((reg == 0xFF) ? -INFINITY : ((float)(0x30 - (reg)) / 2.0))
 /************************************************************************
@@ -655,18 +655,18 @@
 #define TAS6754_DIG_VOL_CH3_SHIFT                           (0)
 #define TAS6754_DIG_VOL_CH3_GET_VOL(val)                    ((val) & TAS6754_DIG_VOL_CH3_MASK)
 #define TAS6754_DIG_VOL_CH3_SET_VOL(val)                    ((val) & 0xFF)
-#define TAS6754_DIG_VOL_CH3_0DB                             (0x30)              /* 0.0 dB (Reset value) */
-#define TAS6754_DIG_VOL_CH3_MINUS_0_5DB                     (0x31)              /* -0.5 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_1DB                       (0x32)              /* -1.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_6DB                       (0x3C)              /* -6.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_12DB                      (0x48)              /* -12.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_20DB                      (0x58)              /* -20.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_40DB                      (0x80)              /* -40.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_60DB                      (0xA8)              /* -60.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_80DB                      (0xD0)              /* -80.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_100DB                     (0xF8)              /* -100.0 dB */
-#define TAS6754_DIG_VOL_CH3_MINUS_103DB                     (0xFE)              /* -103.0 dB */
-#define TAS6754_DIG_VOL_CH3_MUTE                            (0xFF)              /* Mute */
+#define TAS6754_DIG_VOL_CH3_0DB_MAX                         (0x30)                          /* 0 dB (maximum volume) */
+#define TAS6754_DIG_VOL_CH3_MINUS_20DB                      (0x58)                          /* -20 dB (moderate volume) */
+#define TAS6754_DIG_VOL_CH3_MINUS_30DB                      (0x6C)                          /* -30 dB (lower moderate volume) */
+#define TAS6754_DIG_VOL_CH3_DEFAULT                         TAS6754_DIG_VOL_CH1_MINUS_20DB  /* Default to a Moderate Volume (-20 dB)
+                                                                                                Pros:
+                                                                                                    Safe starting point that's still audible
+                                                                                                    Balances safety with usability
+                                                                                                    Common practice in audio systems
+                                                                                                Cons:
+                                                                                                    Users may need to adjust volume for optimal listening*/
+#define TAS6754_DIG_VOL_CH3_MINUS_103DB_MIN                 (0xFE)                          /* -103 dB (minimum volume) */
+#define TAS6754_DIG_VOL_CH3_MUTE                            (0xFF)                          /* Mute */
 #define TAS6754_DIG_VOL_CH3_DB_TO_REG(db)                   ((db <= 0) ? (0x30 - ((uint8_t)(-db * 2))) : 0x30)
 #define TAS6754_DIG_VOL_CH3_REG_TO_DB(reg)                  ((reg == 0xFF) ? -INFINITY : ((float)(0x30 - (reg)) / 2.0))
 /************************************************************************
@@ -676,18 +676,18 @@
 #define TAS6754_DIG_VOL_CH4_SHIFT                           (0)
 #define TAS6754_DIG_VOL_CH4_GET_VOL(val)                    ((val) & TAS6754_DIG_VOL_CH4_MASK)
 #define TAS6754_DIG_VOL_CH4_SET_VOL(val)                    ((val) & 0xFF)
-#define TAS6754_DIG_VOL_CH4_0DB                             (0x30)              /* 0.0 dB (Reset value) */
-#define TAS6754_DIG_VOL_CH4_MINUS_0_5DB                     (0x31)              /* -0.5 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_1DB                       (0x32)              /* -1.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_6DB                       (0x3C)              /* -6.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_12DB                      (0x48)              /* -12.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_20DB                      (0x58)              /* -20.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_40DB                      (0x80)              /* -40.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_60DB                      (0xA8)              /* -60.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_80DB                      (0xD0)              /* -80.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_100DB                     (0xF8)              /* -100.0 dB */
-#define TAS6754_DIG_VOL_CH4_MINUS_103DB                     (0xFE)              /* -103.0 dB */
-#define TAS6754_DIG_VOL_CH4_MUTE                            (0xFF)              /* Mute */
+#define TAS6754_DIG_VOL_CH4_0DB_MAX                         (0x30)                          /* 0 dB (maximum volume) */
+#define TAS6754_DIG_VOL_CH4_MINUS_20DB                      (0x58)                          /* -20 dB (moderate volume) */
+#define TAS6754_DIG_VOL_CH4_MINUS_30DB                      (0x6C)                          /* -30 dB (lower moderate volume) */
+#define TAS6754_DIG_VOL_CH4_DEFAULT                         TAS6754_DIG_VOL_CH1_MINUS_20DB  /* Default to a Moderate Volume (-20 dB)
+                                                                                                Pros:
+                                                                                                    Safe starting point that's still audible
+                                                                                                    Balances safety with usability
+                                                                                                    Common practice in audio systems
+                                                                                                Cons:
+                                                                                                    Users may need to adjust volume for optimal listening*/
+#define TAS6754_DIG_VOL_CH4_MINUS_103DB_MIN                 (0xFE)                          /* -103 dB (minimum volume) */
+#define TAS6754_DIG_VOL_CH4_MUTE                            (0xFF)                          /* Mute */
 #define TAS6754_DIG_VOL_CH4_DB_TO_REG(db)                   ((db <= 0) ? (0x30 - ((uint8_t)(-db * 2))) : 0x30)
 #define TAS6754_DIG_VOL_CH4_REG_TO_DB(reg)                  ((reg == 0xFF) ? -INFINITY : ((float)(0x30 - (reg)) / 2.0))
 /************************************************************************
@@ -1037,8 +1037,8 @@
 #define TAS6754_PWM_PHASE_SELECT_MODE_1                     (0x01 << 4)         /* 001: Ch1:0°, Ch2:45°, Ch3:90°, Ch4:135° */
 #define TAS6754_PWM_PHASE_SYNC_SELECT_GPIO                  (0x00 << 1)         /* 0: GPIO sync */
 #define TAS6754_PWM_PHASE_SYNC_SELECT_SCLK                  (0x01 << 1)         /* 1: SCLK sync */
-#define TAS6754_PWM_PHASE_SYNC_DISABLE                      (0x00)         /* 0: Disable ramp phase sync */
-#define TAS6754_PWM_PHASE_SYNC_ENABLE                       (0x01)         /* 1: Enable ramp phase sync */
+#define TAS6754_PWM_PHASE_SYNC_DISABLE                      (0x00)              /* 0: Disable ramp phase sync */
+#define TAS6754_PWM_PHASE_SYNC_ENABLE                       (0x01)              /* 1: Enable ramp phase sync */
 /************************************************************************
 * 					TAS6754_SS_CTRL (0x61) (R/W)
 ************************************************************************/
@@ -1057,8 +1057,8 @@
 #define TAS6754_SS_CTRL_RDM_PERIOD_TRIANGLE_RANDOM          (0x01 << 2)         /* 1: Triangle spread spectrum with random period */
 #define TAS6754_SS_CTRL_RANDOM_SS_DISABLE                   (0x00 << 1)         /* 0: Disable random spread spectrum */
 #define TAS6754_SS_CTRL_RANDOM_SS_ENABLE                    (0x01 << 1)         /* 1: Enable random spread spectrum */
-#define TAS6754_SS_CTRL_TRIANGLE_SS_DISABLE                 (0x00)         /* 0: Disable triangle spread spectrum */
-#define TAS6754_SS_CTRL_TRIANGLE_SS_ENABLE                  (0x01)         /* 1: Enable triangle spread spectrum */
+#define TAS6754_SS_CTRL_TRIANGLE_SS_DISABLE                 (0x00)              /* 0: Disable triangle spread spectrum */
+#define TAS6754_SS_CTRL_TRIANGLE_SS_ENABLE                  (0x01)              /* 1: Enable triangle spread spectrum */
 #define TAS6754_SS_CTRL_RESERVED_MASK                       (TAS6754_SS_CTRL_RESERVED_5_MASK | \
                                                             TAS6754_SS_CTRL_RESERVED_4_MASK | \
                                                             TAS6754_SS_CTRL_RESERVED_3_MASK)
@@ -1078,10 +1078,10 @@
 #define TAS6754_SS_RANGE_RDM_DWELL_1_TO_4                   (0x01 << 2)         /* 01: Random triangle SS period from 1/FSS to 4/FSS */
 #define TAS6754_SS_RANGE_RDM_DWELL_1_TO_8                   (0x02 << 2)         /* 10: Random triangle SS period from 1/FSS to 8/FSS */
 #define TAS6754_SS_RANGE_RDM_DWELL_1_TO_15                  (0x03 << 2)         /* 11: Random triangle SS period from 1/FSS to 15/FSS */
-#define TAS6754_SS_RANGE_TRIANGLE_6_5_PERCENT               (0x00)         /* 00: ±6.5% */
-#define TAS6754_SS_RANGE_TRIANGLE_13_5_PERCENT              (0x01)         /* 01: ±13.5% */
-#define TAS6754_SS_RANGE_TRIANGLE_5_PERCENT                 (0x02)         /* 10: ±5% */
-#define TAS6754_SS_RANGE_TRIANGLE_10_PERCENT                (0x03)         /* 11: ±10% */
+#define TAS6754_SS_RANGE_TRIANGLE_6_5_PERCENT               (0x00)              /* 00: ±6.5% */
+#define TAS6754_SS_RANGE_TRIANGLE_13_5_PERCENT              (0x01)              /* 01: ±13.5% */
+#define TAS6754_SS_RANGE_TRIANGLE_5_PERCENT                 (0x02)              /* 10: ±5% */
+#define TAS6754_SS_RANGE_TRIANGLE_10_PERCENT                (0x03)              /* 11: ±10% */
 /************************************************************************
 * 					TAS6754_SS_DWELL_CTRL (0x66) (R/W)
 ************************************************************************/
@@ -1169,8 +1169,8 @@
 #define TAS6754_AUTO_MUTE_STATUS_CH2_MUTED                  (0x01 << 2)         /* 1: Channel 2 auto muted */
 #define TAS6754_AUTO_MUTE_STATUS_CH3_NOT_MUTED              (0x00 << 1)         /* 0: Channel 3 not auto muted */
 #define TAS6754_AUTO_MUTE_STATUS_CH3_MUTED                  (0x01 << 1)         /* 1: Channel 3 auto muted */
-#define TAS6754_AUTO_MUTE_STATUS_CH4_NOT_MUTED              (0x00)         /* 0: Channel 4 not auto muted */
-#define TAS6754_AUTO_MUTE_STATUS_CH4_MUTED                  (0x01)         /* 1: Channel 4 auto muted */
+#define TAS6754_AUTO_MUTE_STATUS_CH4_NOT_MUTED              (0x00)              /* 0: Channel 4 not auto muted */
+#define TAS6754_AUTO_MUTE_STATUS_CH4_MUTED                  (0x01)              /* 1: Channel 4 auto muted */
 #define TAS6754_AUTO_MUTE_STATUS_ALL_CHANNELS_MASK          GENMASK(3, 0)       /* Mask for all channel status bits */
 /************************************************************************
 * 					TAS6754_STATE_REPORT_CH1_CH2 (0x72) (R)
@@ -1184,13 +1184,13 @@
 #define TAS6754_STATE_CH1_PLAY                              (0x04 << 4)         /* 0100: PLAY */
 #define TAS6754_STATE_CH1_FAULT                             (0x05 << 4)         /* 0101: FAULT */
 #define TAS6754_STATE_CH1_AUTOREC                           (0x06 << 4)         /* 0110: AUTOREC */
-#define TAS6754_STATE_CH2_DEEPSLEEP                         (0x00)         /* 0000: DEEPSLEEP */
-#define TAS6754_STATE_CH2_LOAD_DIAG                         (0x01)         /* 0001: LOAD DIAG */
-#define TAS6754_STATE_CH2_SLEEP                             (0x02)         /* 0010: SLEEP */
-#define TAS6754_STATE_CH2_HIZ                               (0x03)         /* 0011: HI-Z */
-#define TAS6754_STATE_CH2_PLAY                              (0x04)         /* 0100: PLAY */
-#define TAS6754_STATE_CH2_FAULT                             (0x05)         /* 0101: FAULT */
-#define TAS6754_STATE_CH2_AUTOREC                           (0x06)         /* 0110: AUTOREC */
+#define TAS6754_STATE_CH2_DEEPSLEEP                         (0x00)              /* 0000: DEEPSLEEP */
+#define TAS6754_STATE_CH2_LOAD_DIAG                         (0x01)              /* 0001: LOAD DIAG */
+#define TAS6754_STATE_CH2_SLEEP                             (0x02)              /* 0010: SLEEP */
+#define TAS6754_STATE_CH2_HIZ                               (0x03)              /* 0011: HI-Z */
+#define TAS6754_STATE_CH2_PLAY                              (0x04)              /* 0100: PLAY */
+#define TAS6754_STATE_CH2_FAULT                             (0x05)              /* 0101: FAULT */
+#define TAS6754_STATE_CH2_AUTOREC                           (0x06)              /* 0110: AUTOREC */
 #define TAS6754_GET_CH1_STATE(reg_val)                      ((reg_val & TAS6754_STATE_REPORT_CH1_MASK) >> 4)
 #define TAS6754_GET_CH2_STATE(reg_val)                      (reg_val & TAS6754_STATE_REPORT_CH2_MASK)
 /************************************************************************
@@ -1205,13 +1205,13 @@
 #define TAS6754_STATE_CH3_PLAY                              (0x04 << 4)         /* 0100: PLAY */
 #define TAS6754_STATE_CH3_FAULT                             (0x05 << 4)         /* 0101: FAULT */
 #define TAS6754_STATE_CH3_AUTOREC                           (0x06 << 4)         /* 0110: AUTOREC */
-#define TAS6754_STATE_CH4_DEEPSLEEP                         (0x00)         /* 0000: DEEPSLEEP */
-#define TAS6754_STATE_CH4_LOAD_DIAG                         (0x01)         /* 0001: LOAD DIAG */
-#define TAS6754_STATE_CH4_SLEEP                             (0x02)         /* 0010: SLEEP */
-#define TAS6754_STATE_CH4_HIZ                               (0x03)         /* 0011: HI-Z */
-#define TAS6754_STATE_CH4_PLAY                              (0x04)         /* 0100: PLAY */
-#define TAS6754_STATE_CH4_FAULT                             (0x05)         /* 0101: FAULT */
-#define TAS6754_STATE_CH4_AUTOREC                           (0x06)         /* 0110: AUTOREC */
+#define TAS6754_STATE_CH4_DEEPSLEEP                         (0x00)              /* 0000: DEEPSLEEP */
+#define TAS6754_STATE_CH4_LOAD_DIAG                         (0x01)              /* 0001: LOAD DIAG */
+#define TAS6754_STATE_CH4_SLEEP                             (0x02)              /* 0010: SLEEP */
+#define TAS6754_STATE_CH4_HIZ                               (0x03)              /* 0011: HI-Z */
+#define TAS6754_STATE_CH4_PLAY                              (0x04)              /* 0100: PLAY */
+#define TAS6754_STATE_CH4_FAULT                             (0x05)              /* 0101: FAULT */
+#define TAS6754_STATE_CH4_AUTOREC                           (0x06)              /* 0110: AUTOREC */
 #define TAS6754_GET_CH3_STATE(reg_val)                      ((reg_val & TAS6754_STATE_REPORT_CH3_MASK) >> 4)
 #define TAS6754_GET_CH4_STATE(reg_val)                      (reg_val & TAS6754_STATE_REPORT_CH4_MASK)
 /************************************************************************
@@ -1313,8 +1313,8 @@
 #define TAS6754_POWER_FAULT_1_CH1_SHORT_STORED              (0x01 << 2)         /* 1: Channel 1 OUTM soft short fault event stored */
 #define TAS6754_POWER_FAULT_1_CP_UVLO_NO_STORED             (0x00 << 1)         /* 0: No charge pump UVLO fault event stored */
 #define TAS6754_POWER_FAULT_1_CP_UVLO_STORED                (0x01 << 1)         /* 1: Charge pump UVLO fault event stored */
-#define TAS6754_POWER_FAULT_1_CP_UVLO_NO_FAULT              (0x00)         /* 0: No charge pump UVLO fault */
-#define TAS6754_POWER_FAULT_1_CP_UVLO_FAULT                 (0x01)         /* 1: Charge pump UVLO fault happens */
+#define TAS6754_POWER_FAULT_1_CP_UVLO_NO_FAULT              (0x00)              /* 0: No charge pump UVLO fault */
+#define TAS6754_POWER_FAULT_1_CP_UVLO_FAULT                 (0x01)              /* 1: Charge pump UVLO fault happens */
 #define TAS6754_POWER_FAULT_1_ALL_CH_SHORT_MASK             (TAS6754_POWER_FAULT_1_CH4_SOFT_SHORT_MASK | \
                                                             TAS6754_POWER_FAULT_1_CH3_SOFT_SHORT_MASK | \
                                                             TAS6754_POWER_FAULT_1_CH2_SOFT_SHORT_MASK | \
@@ -1342,8 +1342,8 @@
 #define TAS6754_POWER_FAULT_2_VBAT_OV_FAULT                 (0x01 << 2)         /* 1: VBAT supply voltage is above OV threshold */
 #define TAS6754_POWER_FAULT_2_PVDD_UV_NORMAL                (0x00 << 1)         /* 0: PVDD supply voltage is above UV threshold */
 #define TAS6754_POWER_FAULT_2_PVDD_UV_FAULT                 (0x01 << 1)         /* 1: PVDD supply voltage is below UV threshold */
-#define TAS6754_POWER_FAULT_2_VBAT_UV_NORMAL                (0x00)         /* 0: VBAT supply voltage is above UV threshold */
-#define TAS6754_POWER_FAULT_2_VBAT_UV_FAULT                 (0x01)         /* 1: VBAT supply voltage is below UV threshold */
+#define TAS6754_POWER_FAULT_2_VBAT_UV_NORMAL                (0x00)              /* 0: VBAT supply voltage is above UV threshold */
+#define TAS6754_POWER_FAULT_2_VBAT_UV_FAULT                 (0x01)              /* 1: VBAT supply voltage is below UV threshold */
 #define TAS6754_POWER_FAULT_2_ALL_SUPPLY_MASK               (TAS6754_POWER_FAULT_2_DVDD_UV_MASK | \
                                                             TAS6754_POWER_FAULT_2_PVDD_OV_MASK | \
                                                             TAS6754_POWER_FAULT_2_VBAT_OV_MASK | \
@@ -1374,8 +1374,8 @@
 #define TAS6754_OT_FAULT_CH2_OTSD_FAULT                     (0x01 << 2)         /* 1: Channel 2 temperature is above OTSD threshold */
 #define TAS6754_OT_FAULT_CH3_OTSD_NORMAL                    (0x00 << 1)         /* 0: Channel 3 temperature is below OTSD threshold */
 #define TAS6754_OT_FAULT_CH3_OTSD_FAULT                     (0x01 << 1)         /* 1: Channel 3 temperature is above OTSD threshold */
-#define TAS6754_OT_FAULT_CH4_OTSD_NORMAL                    (0x00)         /* 0: Channel 4 temperature is below OTSD threshold */
-#define TAS6754_OT_FAULT_CH4_OTSD_FAULT                     (0x01)         /* 1: Channel 4 temperature is above OTSD threshold */
+#define TAS6754_OT_FAULT_CH4_OTSD_NORMAL                    (0x00)              /* 0: Channel 4 temperature is below OTSD threshold */
+#define TAS6754_OT_FAULT_CH4_OTSD_FAULT                     (0x01)              /* 1: Channel 4 temperature is above OTSD threshold */
 #define TAS6754_OT_FAULT_ALL_CH_OTSD_MASK                   (TAS6754_OT_FAULT_CH1_OTSD_MASK | \
                                                             TAS6754_OT_FAULT_CH2_OTSD_MASK | \
                                                             TAS6754_OT_FAULT_CH3_OTSD_MASK | \
@@ -1397,8 +1397,8 @@
 #define TAS6754_OTW_STATUS_CH2_WARNING                      (0x01 << 2)         /* 1: Channel 2 temperature is above OTW threshold */
 #define TAS6754_OTW_STATUS_CH3_NORMAL                       (0x00 << 1)         /* 0: Channel 3 temperature is below OTW threshold */
 #define TAS6754_OTW_STATUS_CH3_WARNING                      (0x01 << 1)         /* 1: Channel 3 temperature is above OTW threshold */
-#define TAS6754_OTW_STATUS_CH4_NORMAL                       (0x00)         /* 0: Channel 4 temperature is below OTW threshold */
-#define TAS6754_OTW_STATUS_CH4_WARNING                      (0x01)         /* 1: Channel 4 temperature is above OTW threshold */
+#define TAS6754_OTW_STATUS_CH4_NORMAL                       (0x00)              /* 0: Channel 4 temperature is below OTW threshold */
+#define TAS6754_OTW_STATUS_CH4_WARNING                      (0x01)              /* 1: Channel 4 temperature is above OTW threshold */
 #define TAS6754_OTW_STATUS_ALL_CH_MASK                      (TAS6754_OTW_STATUS_CH1_OTW_MASK | \
                                                             TAS6754_OTW_STATUS_CH2_OTW_MASK | \
                                                             TAS6754_OTW_STATUS_CH3_OTW_MASK | \
@@ -1417,8 +1417,8 @@
 #define TAS6754_CLIP_WARN_STATUS_CH2_CLIPPING               (0x01 << 2)         /* 1: Channel 2 clipping is above clip detect threshold */
 #define TAS6754_CLIP_WARN_STATUS_CH3_NORMAL                 (0x00 << 1)         /* 0: Channel 3 clipping is not present or below threshold */
 #define TAS6754_CLIP_WARN_STATUS_CH3_CLIPPING               (0x01 << 1)         /* 1: Channel 3 clipping is above clip detect threshold */
-#define TAS6754_CLIP_WARN_STATUS_CH4_NORMAL                 (0x00)         /* 0: Channel 4 clipping is not present or below threshold */
-#define TAS6754_CLIP_WARN_STATUS_CH4_CLIPPING               (0x01)         /* 1: Channel 4 clipping is above clip detect threshold */
+#define TAS6754_CLIP_WARN_STATUS_CH4_NORMAL                 (0x00)              /* 0: Channel 4 clipping is not present or below threshold */
+#define TAS6754_CLIP_WARN_STATUS_CH4_CLIPPING               (0x01)              /* 1: Channel 4 clipping is above clip detect threshold */
 #define TAS6754_CLIP_WARN_STATUS_ALL_CH_MASK                (TAS6754_CLIP_WARN_STATUS_CH1_MASK | \
                                                             TAS6754_CLIP_WARN_STATUS_CH2_MASK | \
                                                             TAS6754_CLIP_WARN_STATUS_CH3_MASK | \
@@ -1464,8 +1464,8 @@
 #define TAS6754_POWER_FAULT_LATCHED_VBAT_OV_STORED          (0x01 << 2)         /* 1: VBAT over voltage event detected and stored */
 #define TAS6754_POWER_FAULT_LATCHED_PVDD_UV_NONE            (0x00 << 1)         /* 0: No PVDD under voltage event stored */
 #define TAS6754_POWER_FAULT_LATCHED_PVDD_UV_STORED          (0x01 << 1)         /* 1: PVDD under voltage event detected and stored */
-#define TAS6754_POWER_FAULT_LATCHED_VBAT_UV_NONE            (0x00)         /* 0: No VBAT under voltage event stored */
-#define TAS6754_POWER_FAULT_LATCHED_VBAT_UV_STORED          (0x01)         /* 1: VBAT under voltage event detected and stored */
+#define TAS6754_POWER_FAULT_LATCHED_VBAT_UV_NONE            (0x00)              /* 0: No VBAT under voltage event stored */
+#define TAS6754_POWER_FAULT_LATCHED_VBAT_UV_STORED          (0x01)              /* 1: VBAT under voltage event detected and stored */
 #define TAS6754_POWER_FAULT_LATCHED_RESERVED_MASK           (TAS6754_POWER_FAULT_LATCHED_RESERVED_6_MASK | \
                                                             TAS6754_POWER_FAULT_LATCHED_RESERVED_5_MASK)
 #define TAS6754_POWER_FAULT_LATCHED_ALL_MASK                (TAS6754_POWER_FAULT_LATCHED_DVDD_POR_MASK | \
@@ -1492,8 +1492,8 @@
 #define TAS6754_OTSD_LATCHED_CH2_STORED                     (0x01 << 2)         /* 1: Channel 2 over temperature shutdown event detected and stored */
 #define TAS6754_OTSD_LATCHED_CH3_NONE                       (0x00 << 1)         /* 0: No Channel 3 over temperature shutdown event stored */
 #define TAS6754_OTSD_LATCHED_CH3_STORED                     (0x01 << 1)         /* 1: Channel 3 over temperature shutdown event detected and stored */
-#define TAS6754_OTSD_LATCHED_CH4_NONE                       (0x00)         /* 0: No Channel 4 over temperature shutdown event stored */
-#define TAS6754_OTSD_LATCHED_CH4_STORED                     (0x01)         /* 1: Channel 4 over temperature shutdown event detected and stored */
+#define TAS6754_OTSD_LATCHED_CH4_NONE                       (0x00)              /* 0: No Channel 4 over temperature shutdown event stored */
+#define TAS6754_OTSD_LATCHED_CH4_STORED                     (0x01)              /* 1: Channel 4 over temperature shutdown event detected and stored */
 #define TAS6754_OTSD_LATCHED_RESERVED_MASK                  (TAS6754_OTSD_LATCHED_RESERVED_7_6_MASK | \
                                                             TAS6754_OTSD_LATCHED_RESERVED_5_MASK)
 #define TAS6754_OTSD_LATCHED_ALL_CH_MASK                    (TAS6754_OTSD_LATCHED_CH1_MASK | \
@@ -1517,8 +1517,8 @@
 #define TAS6754_OTW_LATCHED_CH2_STORED                      (0x01 << 2)         /* 1: Channel 2 over temperature warning event detected and stored */
 #define TAS6754_OTW_LATCHED_CH3_NONE                        (0x00 << 1)         /* 0: No Channel 3 over temperature warning event stored */
 #define TAS6754_OTW_LATCHED_CH3_STORED                      (0x01 << 1)         /* 1: Channel 3 over temperature warning event detected and stored */
-#define TAS6754_OTW_LATCHED_CH4_NONE                        (0x00)         /* 0: No Channel 4 over temperature warning event stored */
-#define TAS6754_OTW_LATCHED_CH4_STORED                      (0x01)         /* 1: Channel 4 over temperature warning event detected and stored */
+#define TAS6754_OTW_LATCHED_CH4_NONE                        (0x00)              /* 0: No Channel 4 over temperature warning event stored */
+#define TAS6754_OTW_LATCHED_CH4_STORED                      (0x01)              /* 1: Channel 4 over temperature warning event detected and stored */
 #define TAS6754_OTW_LATCHED_ALL_CH_MASK                     (TAS6754_OTW_LATCHED_CH1_MASK | \
                                                             TAS6754_OTW_LATCHED_CH2_MASK | \
                                                             TAS6754_OTW_LATCHED_CH3_MASK | \
@@ -1537,8 +1537,8 @@
 #define TAS6754_CLIP_WARN_LATCHED_CH2_STORED                (0x01 << 2)         /* 1: Channel 2 clipping event detected and stored */
 #define TAS6754_CLIP_WARN_LATCHED_CH3_NONE                  (0x00 << 1)         /* 0: No Channel 3 clipping event stored */
 #define TAS6754_CLIP_WARN_LATCHED_CH3_STORED                (0x01 << 1)         /* 1: Channel 3 clipping event detected and stored */
-#define TAS6754_CLIP_WARN_LATCHED_CH4_NONE                  (0x00)         /* 0: No Channel 4 clipping event stored */
-#define TAS6754_CLIP_WARN_LATCHED_CH4_STORED                (0x01)         /* 1: Channel 4 clipping event detected and stored */
+#define TAS6754_CLIP_WARN_LATCHED_CH4_NONE                  (0x00)              /* 0: No Channel 4 clipping event stored */
+#define TAS6754_CLIP_WARN_LATCHED_CH4_STORED                (0x01)              /* 1: Channel 4 clipping event detected and stored */
 #define TAS6754_CLIP_WARN_LATCHED_ALL_CH_MASK               (TAS6754_CLIP_WARN_LATCHED_CH1_MASK | \
                                                             TAS6754_CLIP_WARN_LATCHED_CH2_MASK | \
                                                             TAS6754_CLIP_WARN_LATCHED_CH3_MASK | \
@@ -1549,8 +1549,8 @@
 #define TAS6754_CLK_FAULT_LATCHED_RESERVED_7_2_MASK         GENMASK(7, 2)       /* Bits 7-2: Reserved */
 #define TAS6754_CLK_FAULT_LATCHED_RESERVED_1_MASK           BIT(1)              /* Bit 1: Reserved */
 #define TAS6754_CLK_FAULT_LATCHED_CLOCK_FAULT_MASK          BIT(0)              /* Bit 0: CLOCK FAULT STORED */
-#define TAS6754_CLK_FAULT_LATCHED_NONE                      (0x00)         /* 0: No Clock Error event stored */
-#define TAS6754_CLK_FAULT_LATCHED_STORED                    (0x01)         /* 1: Clock Error event stored */
+#define TAS6754_CLK_FAULT_LATCHED_NONE                      (0x00)              /* 0: No Clock Error event stored */
+#define TAS6754_CLK_FAULT_LATCHED_STORED                    (0x01)              /* 1: Clock Error event stored */
 #define TAS6754_CLK_FAULT_LATCHED_RESERVED_MASK             (TAS6754_CLK_FAULT_LATCHED_RESERVED_7_2_MASK | \
                                                             TAS6754_CLK_FAULT_LATCHED_RESERVED_1_MASK)
 /************************************************************************
@@ -1578,8 +1578,8 @@
 #define TAS6754_RTLDG_OL_CH2_STORED                         (0x01 << 2)         /* 1: Open load condition on Channel 2 */
 #define TAS6754_RTLDG_OL_CH3_NONE                           (0x00 << 1)         /* 0: No open load condition on Channel 3 */
 #define TAS6754_RTLDG_OL_CH3_STORED                         (0x01 << 1)         /* 1: Open load condition on Channel 3 */
-#define TAS6754_RTLDG_OL_CH4_NONE                           (0x00)         /* 0: No open load condition on Channel 4 */
-#define TAS6754_RTLDG_OL_CH4_STORED                         (0x01)         /* 1: Open load condition on Channel 4 */
+#define TAS6754_RTLDG_OL_CH4_NONE                           (0x00)              /* 0: No open load condition on Channel 4 */
+#define TAS6754_RTLDG_OL_CH4_STORED                         (0x01)              /* 1: Open load condition on Channel 4 */
 #define TAS6754_RTLDG_SL_ALL_CH_MASK                        (TAS6754_RTLDG_SL_CH1_MASK | \
                                                             TAS6754_RTLDG_SL_CH2_MASK | \
                                                             TAS6754_RTLDG_SL_CH3_MASK | \
@@ -1613,8 +1613,8 @@
 #define TAS6754_CBC_FAULT_CH2_STORED                        (0x01 << 2)         /* 1: Channel 2 load current fault event detected and stored */
 #define TAS6754_CBC_FAULT_CH3_NONE                          (0x00 << 1)         /* 0: No Channel 3 load current fault event stored */
 #define TAS6754_CBC_FAULT_CH3_STORED                        (0x01 << 1)         /* 1: Channel 3 load current fault event detected and stored */
-#define TAS6754_CBC_FAULT_CH4_NONE                          (0x00)         /* 0: No Channel 4 load current fault event stored */
-#define TAS6754_CBC_FAULT_CH4_STORED                        (0x01)         /* 1: Channel 4 load current fault event detected and stored */
+#define TAS6754_CBC_FAULT_CH4_NONE                          (0x00)              /* 0: No Channel 4 load current fault event stored */
+#define TAS6754_CBC_FAULT_CH4_STORED                        (0x01)              /* 1: Channel 4 load current fault event detected and stored */
 #define TAS6754_CBC_WARN_ALL_CH_MASK                        (TAS6754_CBC_WARN_CH1_MASK | \
                                                             TAS6754_CBC_WARN_CH2_MASK | \
                                                             TAS6754_CBC_WARN_CH3_MASK | \
@@ -1648,8 +1648,8 @@
 #define TAS6754_DC_FAULT_CH2_STORED                         (0x01 << 2)         /* 1: Channel 2 DC fault event detected and stored */
 #define TAS6754_DC_FAULT_CH3_NONE                           (0x00 << 1)         /* 0: No Channel 3 DC fault event stored */
 #define TAS6754_DC_FAULT_CH3_STORED                         (0x01 << 1)         /* 1: Channel 3 DC fault event detected and stored */
-#define TAS6754_DC_FAULT_CH4_NONE                           (0x00)         /* 0: No Channel 4 DC fault event stored */
-#define TAS6754_DC_FAULT_CH4_STORED                         (0x01)         /* 1: Channel 4 DC fault event detected and stored */
+#define TAS6754_DC_FAULT_CH4_NONE                           (0x00)              /* 0: No Channel 4 DC fault event stored */
+#define TAS6754_DC_FAULT_CH4_STORED                         (0x01)              /* 1: Channel 4 DC fault event detected and stored */
 #define TAS6754_OC_FAULT_ALL_CH_MASK                        (TAS6754_OC_FAULT_CH1_MASK | \
                                                             TAS6754_OC_FAULT_CH2_MASK | \
                                                             TAS6754_OC_FAULT_CH3_MASK | \
@@ -1691,8 +1691,8 @@
 #define TAS6754_REPORT_ROUTING_2_DC_LDG_ENABLE              (0x01 << 3)         /* 1: Non-Latched DC Load Diagnostics events are routed to FAULT */
 #define TAS6754_REPORT_ROUTING_2_OTSD_DISABLE               (0x00 << 1)         /* 0: Non-Latched Overtemperature Shutdown events are not routed to FAULT */
 #define TAS6754_REPORT_ROUTING_2_OTSD_ENABLE                (0x01 << 1)         /* 1: Non-Latched Overtemperature Shutdown events are routed to FAULT */
-#define TAS6754_REPORT_ROUTING_2_POWER_DISABLE              (0x00)         /* 0: Non-Latching Power Fault events are not routed to FAULT */
-#define TAS6754_REPORT_ROUTING_2_POWER_ENABLE               (0x01)         /* 1: Non-Latching Power Fault events are routed to FAULT */
+#define TAS6754_REPORT_ROUTING_2_POWER_DISABLE              (0x00)              /* 0: Non-Latching Power Fault events are not routed to FAULT */
+#define TAS6754_REPORT_ROUTING_2_POWER_ENABLE               (0x01)              /* 1: Non-Latching Power Fault events are routed to FAULT */
 #define TAS6754_REPORT_ROUTING_2_RESERVED_MASK              (TAS6754_REPORT_ROUTING_2_RESERVED_6_MASK | \
                                                             TAS6754_REPORT_ROUTING_2_RESERVED_2_MASK)
 /************************************************************************
@@ -1716,8 +1716,8 @@
 #define TAS6754_REPORT_ROUTING_3_DC_LDG_ENABLE              (0x01 << 3)         /* 1: Non-Latched DC Load Diagnostics events are routed to WARN */
 #define TAS6754_REPORT_ROUTING_3_OTSD_DISABLE               (0x00 << 1)         /* 0: Non-Latched Overtemperature Shutdown events are not routed to WARN */
 #define TAS6754_REPORT_ROUTING_3_OTSD_ENABLE                (0x01 << 1)         /* 1: Non-Latched Overtemperature Shutdown events are routed to WARN */
-#define TAS6754_REPORT_ROUTING_3_POWER_DISABLE              (0x00)         /* 0: Non-Latching Power Fault events are not routed to WARN */
-#define TAS6754_REPORT_ROUTING_3_POWER_ENABLE               (0x01)         /* 1: Non-Latching Power Fault events are routed to WARN */
+#define TAS6754_REPORT_ROUTING_3_POWER_DISABLE              (0x00)              /* 0: Non-Latching Power Fault events are not routed to WARN */
+#define TAS6754_REPORT_ROUTING_3_POWER_ENABLE               (0x01)              /* 1: Non-Latching Power Fault events are routed to WARN */
 #define TAS6754_REPORT_ROUTING_3_RESERVED_MASK              (TAS6754_REPORT_ROUTING_3_RESERVED_6_MASK | \
                                                             TAS6754_REPORT_ROUTING_3_RESERVED_2_MASK)
 /************************************************************************
@@ -1743,8 +1743,8 @@
 #define TAS6754_REPORT_ROUTING_4_OC_LATCH_ENABLE            (0x01 << 2)         /* 1: Latching Overcurrent shutdown events are routed to FAULT */
 #define TAS6754_REPORT_ROUTING_4_DC_LATCH_DISABLE           (0x00 << 1)         /* 0: Latching DC Detect events are not routed to FAULT */
 #define TAS6754_REPORT_ROUTING_4_DC_LATCH_ENABLE            (0x01 << 1)         /* 1: Latching DC Detect events are routed to FAULT */
-#define TAS6754_REPORT_ROUTING_4_FAULT_WARN_DISABLE         (0x00)         /* 0: WARN pin signals are not routed to the FAULT pin */
-#define TAS6754_REPORT_ROUTING_4_FAULT_WARN_ENABLE          (0x01)         /* 1: WARN pin signals are routed to the FAULT pin */
+#define TAS6754_REPORT_ROUTING_4_FAULT_WARN_DISABLE         (0x00)              /* 0: WARN pin signals are not routed to the FAULT pin */
+#define TAS6754_REPORT_ROUTING_4_FAULT_WARN_ENABLE          (0x01)              /* 1: WARN pin signals are routed to the FAULT pin */
 /************************************************************************
 * 					TAS6754_CLIP_DETECT_CTRL (0x93) (R/W)
 ************************************************************************/
@@ -1784,8 +1784,8 @@
 #define TAS6754_REPORT_ROUTING_5_RTLDG_F_ENABLE             (0x01 << 4)         /* 1: Latched Real-time load diagnostic events are routed to FAULT */
 #define TAS6754_REPORT_ROUTING_5_CLIP_WARN_DISABLE          (0x00 << 1)         /* 0: Non-latched Clip Detect events are not routed to WARN */
 #define TAS6754_REPORT_ROUTING_5_CLIP_WARN_ENABLE           (0x01 << 1)         /* 1: Non-latched Clip Detect events are routed to WARN */
-#define TAS6754_REPORT_ROUTING_5_RTLDG_W_DISABLE            (0x00)         /* 0: Latched Real-time load diagnostic events are not routed to WARN */
-#define TAS6754_REPORT_ROUTING_5_RTLDG_W_ENABLE             (0x01)         /* 1: Latched Real-time load diagnostic events are routed to WARN */
+#define TAS6754_REPORT_ROUTING_5_RTLDG_W_DISABLE            (0x00)              /* 0: Latched Real-time load diagnostic events are not routed to WARN */
+#define TAS6754_REPORT_ROUTING_5_RTLDG_W_ENABLE             (0x01)              /* 1: Latched Real-time load diagnostic events are routed to WARN */
 #define TAS6754_REPORT_ROUTING_5_RESERVED_MASK              (TAS6754_REPORT_ROUTING_5_RESERVED_3_MASK | \
                                                             TAS6754_REPORT_ROUTING_5_RESERVED_2_MASK)
 /************************************************************************
@@ -1932,8 +1932,8 @@
 #define TAS6754_GPIO_INVERT_GPO1_INVERTED                   (0x01 << 7)         /* 1: GPIO1 Output signal is inverted */
 #define TAS6754_GPIO_INVERT_GPO2_NON_INVERTED               (0x00 << 6)         /* 0: GPIO2 Output signal is non-inverted */
 #define TAS6754_GPIO_INVERT_GPO2_INVERTED                   (0x01 << 6)         /* 1: GPIO2 Output signal is inverted */
-#define TAS6754_GPIO_INVERT_GPO_PU_ENABLE                   (0x00)         /* 0: Enable internal 110kΩ pull-up of GP outputs in open drain */
-#define TAS6754_GPIO_INVERT_GPO_PU_DISABLE                  (0x01)         /* 1: Disable internal 110kΩ pull-up of GP outputs in open drain */
+#define TAS6754_GPIO_INVERT_GPO_PU_ENABLE                   (0x00)              /* 0: Enable internal 110kΩ pull-up of GP outputs in open drain */
+#define TAS6754_GPIO_INVERT_GPO_PU_DISABLE                  (0x01)              /* 1: Disable internal 110kΩ pull-up of GP outputs in open drain */
 #define TAS6754_GPIO_INVERT_RESERVED_MASK                   (TAS6754_GPIO_INVERT_RESERVED_5_MASK | \
                                                             TAS6754_GPIO_INVERT_RESERVED_4_1_MASK)
 /************************************************************************
@@ -1955,8 +1955,15 @@
 #define TAS6754_DC_LDG_WAIT_BYPASS_ENABLE                   (0x01 << 2)         /* 1: Bypass the waiting loop at the end of shorted/open load detection */
 #define TAS6754_DC_LDG_SLOL_ENABLE                          (0x00 << 1)         /* 0: Shorted load and open load detection are enabled */
 #define TAS6754_DC_LDG_SLOL_DISABLE                         (0x01 << 1)         /* 1: Shorted load, open load and line out detection are disabled */
-#define TAS6754_DC_LDG_BYPASS_DISABLE                       (0x00)         /* 0: Automatic DC diagnostic after a channel fault occurs in Hi-Z or PLAY state */
-#define TAS6754_DC_LDG_BYPASS_ENABLE                        (0x01)         /* 1: DC diagnostic will not run automatically */
+#define TAS6754_DC_LDG_BYPASS_DISABLE                       (0x00)              /* 0: Automatic DC diagnostic after a channel fault occurs in Hi-Z or PLAY state */
+#define TAS6754_DC_LDG_BYPASS_ENABLE                        (0x01)              /* 1: DC diagnostic will not run automatically */
+#define TAS6754_DC_LDG_CTRL_DEFAULT                         (0x00)              /* Enable all diagnostics by default */
+/* Bit positions for ALSA controls */
+#define TAS6754_DC_LDG_BYPASS_SHIFT                         (0)
+#define TAS6754_DC_LDG_SLOL_DISABLE_SHIFT                   (1)
+#define TAS6754_DC_LDG_WAIT_BYPASS_SHIFT                    (2)
+#define TAS6754_DC_LDG_BUFFER_WAIT_SHIFT                    (5)
+#define TAS6754_DC_LDG_ABORT_SHIFT                          (7)
 /************************************************************************
 * 					TAS6754_DC_LDG_LO_CTRL (0xB1) (R/W)
 ************************************************************************/
@@ -1973,8 +1980,9 @@
 #define TAS6754_DC_LDG_LO_CH2_ENABLE                        (0x01 << 2)         /* 1: Enable DC Load Diagnostics for line-out load on Channel 2 */
 #define TAS6754_DC_LDG_LO_CH3_DISABLE                       (0x00 << 1)         /* 0: Disable DC Load Diagnostics for line-out load on Channel 3 */
 #define TAS6754_DC_LDG_LO_CH3_ENABLE                        (0x01 << 1)         /* 1: Enable DC Load Diagnostics for line-out load on Channel 3 */
-#define TAS6754_DC_LDG_LO_CH4_DISABLE                       (0x00)         /* 0: Disable DC Load Diagnostics for line-out load on Channel 4 */
-#define TAS6754_DC_LDG_LO_CH4_ENABLE                        (0x01)         /* 1: Enable DC Load Diagnostics for line-out load on Channel 4 */
+#define TAS6754_DC_LDG_LO_CH4_DISABLE                       (0x00)              /* 0: Disable DC Load Diagnostics for line-out load on Channel 4 */
+#define TAS6754_DC_LDG_LO_CH4_ENABLE                        (0x01)              /* 1: Enable DC Load Diagnostics for line-out load on Channel 4 */
+#define TAS6754_DC_LDG_LO_CTRL_DEFAULT                      (0x00)              /* Disable line-out detection by default */
 #define TAS6754_DC_LDG_LO_ALL_CH_MASK                       (TAS6754_DC_LDG_LO_CH1_ENABLE_MASK | \
                                                             TAS6754_DC_LDG_LO_CH2_ENABLE_MASK | \
                                                             TAS6754_DC_LDG_LO_CH3_ENABLE_MASK | \
@@ -1982,6 +1990,15 @@
 #define TAS6754_DC_LDG_LO_RESERVED_MASK                     (TAS6754_DC_LDG_LO_RESERVED_7_MASK | \
                                                             TAS6754_DC_LDG_LO_RESERVED_6_MASK | \
                                                             TAS6754_DC_LDG_LO_RESERVED_5_4_MASK)
+
+/* Inversion flags for ALSA controls */
+#define TAS6754_INVERT_CONTROL                              (1)                 /* Control value is inverted when writing to register */
+#define TAS6754_NORMAL_CONTROL                              (0)                 /* Control value is used as-is when writing to register */
+/* Bit positions for ALSA controls */
+#define TAS6754_CH1_LO_LDG_ENABLE_SHIFT                     (3)
+#define TAS6754_CH2_LO_LDG_ENABLE_SHIFT                     (2)
+#define TAS6754_CH3_LO_LDG_ENABLE_SHIFT                     (1)
+#define TAS6754_CH4_LO_LDG_ENABLE_SHIFT                     (0)
 /************************************************************************
 * 					TAS6754_DC_LDG_TIME_CTRL (0xB2) (R/W)
 ************************************************************************/
@@ -2001,10 +2018,10 @@
 #define TAS6754_DC_LDG_RAMP_S2PG_2_5MS                      (0x01 << 2)         /* 01: 2.5 ms */
 #define TAS6754_DC_LDG_RAMP_S2PG_10MS                       (0x02 << 2)         /* 10: 10 ms */
 #define TAS6754_DC_LDG_RAMP_S2PG_15MS                       (0x03 << 2)         /* 11: 15 ms */
-#define TAS6754_DC_LDG_SETTLING_S2PG_10MS                   (0x00)         /* 00: 10 ms */
-#define TAS6754_DC_LDG_SETTLING_S2PG_5MS                    (0x01)         /* 01: 5 ms */
-#define TAS6754_DC_LDG_SETTLING_S2PG_20MS                   (0x02)         /* 10: 20 ms */
-#define TAS6754_DC_LDG_SETTLING_S2PG_30MS                   (0x03)         /* 11: 30 ms */
+#define TAS6754_DC_LDG_SETTLING_S2PG_10MS                   (0x00)              /* 00: 10 ms */
+#define TAS6754_DC_LDG_SETTLING_S2PG_5MS                    (0x01)              /* 01: 5 ms */
+#define TAS6754_DC_LDG_SETTLING_S2PG_20MS                   (0x02)              /* 10: 20 ms */
+#define TAS6754_DC_LDG_SETTLING_S2PG_30MS                   (0x03)              /* 11: 30 ms */
 /************************************************************************
 * 					TAS6754_DC_LDG_SL_CH1_CH2_CTRL (0xB3) (R/W)
 ************************************************************************/
@@ -2020,16 +2037,16 @@
 #define TAS6754_DC_LDG_SL_CH1_4_0_OHM                       (0x07 << 4)         /* 0111: 4.0Ω */
 #define TAS6754_DC_LDG_SL_CH1_4_5_OHM                       (0x08 << 4)         /* 1000: 4.5Ω */
 #define TAS6754_DC_LDG_SL_CH1_5_0_OHM                       (0x09 << 4)         /* 1001: 5.0Ω */
-#define TAS6754_DC_LDG_SL_CH2_0_5_OHM                       (0x00)         /* 0000: 0.5Ω */
-#define TAS6754_DC_LDG_SL_CH2_1_0_OHM                       (0x01)         /* 0001: 1.0Ω */
-#define TAS6754_DC_LDG_SL_CH2_1_5_OHM                       (0x02)         /* 0010: 1.5Ω */
-#define TAS6754_DC_LDG_SL_CH2_2_0_OHM                       (0x03)         /* 0011: 2.0Ω */
-#define TAS6754_DC_LDG_SL_CH2_2_5_OHM                       (0x04)         /* 0100: 2.5Ω */
-#define TAS6754_DC_LDG_SL_CH2_3_0_OHM                       (0x05)         /* 0101: 3.0Ω */
-#define TAS6754_DC_LDG_SL_CH2_3_5_OHM                       (0x06)         /* 0110: 3.5Ω */
-#define TAS6754_DC_LDG_SL_CH2_4_0_OHM                       (0x07)         /* 0111: 4.0Ω */
-#define TAS6754_DC_LDG_SL_CH2_4_5_OHM                       (0x08)         /* 1000: 4.5Ω */
-#define TAS6754_DC_LDG_SL_CH2_5_0_OHM                       (0x09)         /* 1001: 5.0Ω */
+#define TAS6754_DC_LDG_SL_CH2_0_5_OHM                       (0x00)              /* 0000: 0.5Ω */
+#define TAS6754_DC_LDG_SL_CH2_1_0_OHM                       (0x01)              /* 0001: 1.0Ω */
+#define TAS6754_DC_LDG_SL_CH2_1_5_OHM                       (0x02)              /* 0010: 1.5Ω */
+#define TAS6754_DC_LDG_SL_CH2_2_0_OHM                       (0x03)              /* 0011: 2.0Ω */
+#define TAS6754_DC_LDG_SL_CH2_2_5_OHM                       (0x04)              /* 0100: 2.5Ω */
+#define TAS6754_DC_LDG_SL_CH2_3_0_OHM                       (0x05)              /* 0101: 3.0Ω */
+#define TAS6754_DC_LDG_SL_CH2_3_5_OHM                       (0x06)              /* 0110: 3.5Ω */
+#define TAS6754_DC_LDG_SL_CH2_4_0_OHM                       (0x07)              /* 0111: 4.0Ω */
+#define TAS6754_DC_LDG_SL_CH2_4_5_OHM                       (0x08)              /* 1000: 4.5Ω */
+#define TAS6754_DC_LDG_SL_CH2_5_0_OHM                       (0x09)              /* 1001: 5.0Ω */
 #define TAS6754_DC_LDG_SL_CH1_SET(val)                      ((val & 0x0F) << 4)
 #define TAS6754_DC_LDG_SL_CH2_SET(val)                      (val & 0x0F)
 /************************************************************************
@@ -2047,16 +2064,16 @@
 #define TAS6754_DC_LDG_SL_CH3_4_0_OHM                       (0x07 << 4)         /* 0111: 4.0Ω */
 #define TAS6754_DC_LDG_SL_CH3_4_5_OHM                       (0x08 << 4)         /* 1000: 4.5Ω */
 #define TAS6754_DC_LDG_SL_CH3_5_0_OHM                       (0x09 << 4)         /* 1001: 5.0Ω */
-#define TAS6754_DC_LDG_SL_CH4_0_5_OHM                       (0x00)         /* 0000: 0.5Ω */
-#define TAS6754_DC_LDG_SL_CH4_1_0_OHM                       (0x01)         /* 0001: 1.0Ω */
-#define TAS6754_DC_LDG_SL_CH4_1_5_OHM                       (0x02)         /* 0010: 1.5Ω */
-#define TAS6754_DC_LDG_SL_CH4_2_0_OHM                       (0x03)         /* 0011: 2.0Ω */
-#define TAS6754_DC_LDG_SL_CH4_2_5_OHM                       (0x04)         /* 0100: 2.5Ω */
-#define TAS6754_DC_LDG_SL_CH4_3_0_OHM                       (0x05)         /* 0101: 3.0Ω */
-#define TAS6754_DC_LDG_SL_CH4_3_5_OHM                       (0x06)         /* 0110: 3.5Ω */
-#define TAS6754_DC_LDG_SL_CH4_4_0_OHM                       (0x07)         /* 0111: 4.0Ω */
-#define TAS6754_DC_LDG_SL_CH4_4_5_OHM                       (0x08)         /* 1000: 4.5Ω */
-#define TAS6754_DC_LDG_SL_CH4_5_0_OHM                       (0x09)         /* 1001: 5.0Ω */
+#define TAS6754_DC_LDG_SL_CH4_0_5_OHM                       (0x00)              /* 0000: 0.5Ω */
+#define TAS6754_DC_LDG_SL_CH4_1_0_OHM                       (0x01)              /* 0001: 1.0Ω */
+#define TAS6754_DC_LDG_SL_CH4_1_5_OHM                       (0x02)              /* 0010: 1.5Ω */
+#define TAS6754_DC_LDG_SL_CH4_2_0_OHM                       (0x03)              /* 0011: 2.0Ω */
+#define TAS6754_DC_LDG_SL_CH4_2_5_OHM                       (0x04)              /* 0100: 2.5Ω */
+#define TAS6754_DC_LDG_SL_CH4_3_0_OHM                       (0x05)              /* 0101: 3.0Ω */
+#define TAS6754_DC_LDG_SL_CH4_3_5_OHM                       (0x06)              /* 0110: 3.5Ω */
+#define TAS6754_DC_LDG_SL_CH4_4_0_OHM                       (0x07)              /* 0111: 4.0Ω */
+#define TAS6754_DC_LDG_SL_CH4_4_5_OHM                       (0x08)              /* 1000: 4.5Ω */
+#define TAS6754_DC_LDG_SL_CH4_5_0_OHM                       (0x09)              /* 1001: 5.0Ω */
 #define TAS6754_DC_LDG_SL_CH3_SET(val)                      ((val & 0x0F) << 4)
 #define TAS6754_DC_LDG_SL_CH4_SET(val)                      (val & 0x0F)
 /************************************************************************
@@ -2076,8 +2093,8 @@
 #define TAS6754_AC_LDG_CH2_START                            (0x01 << 2)         /* 1: Start AC diagnostic on Channel 2 */
 #define TAS6754_AC_LDG_CH3_NORMAL                           (0x00 << 1)         /* 0: Normal operation */
 #define TAS6754_AC_LDG_CH3_START                            (0x01 << 1)         /* 1: Start AC diagnostic on Channel 3 */
-#define TAS6754_AC_LDG_CH4_NORMAL                           (0x00)         /* 0: Normal operation */
-#define TAS6754_AC_LDG_CH4_START                            (0x01)         /* 1: Start AC diagnostic on Channel 4 */
+#define TAS6754_AC_LDG_CH4_NORMAL                           (0x00)              /* 0: Normal operation */
+#define TAS6754_AC_LDG_CH4_START                            (0x01)              /* 1: Start AC diagnostic on Channel 4 */
 #define TAS6754_AC_LDG_ALL_CH_START_MASK                    (TAS6754_AC_LDG_CH1_DIAG_START_MASK | \
                                                             TAS6754_AC_LDG_CH2_DIAG_START_MASK | \
                                                             TAS6754_AC_LDG_CH3_DIAG_START_MASK | \
@@ -2094,8 +2111,8 @@
 #define TAS6754_TWEETER_DETECT_AVG_32768                    (0x01 << 3)         /* 1: 32768-sample averaging in decimation filter */
 #define TAS6754_TWEETER_DETECT_CALC_TYPE_2                  (0x00 << 1)         /* 0: AC pass/fail judgement type 2 - Calculate magnitude as Re(Z)+0.5*Im(Z) */
 #define TAS6754_TWEETER_DETECT_CALC_TYPE_1                  (0x01 << 1)         /* 1: AC pass/fail judgement type 1 - Calculate magnitude as Re(Z) */
-#define TAS6754_TWEETER_DETECT_ENABLE                       (0x00)         /* 0: Enable Tweeter detection judgement */
-#define TAS6754_TWEETER_DETECT_DISABLE                      (0x01)         /* 1: Disable Tweeter detection calculation */
+#define TAS6754_TWEETER_DETECT_ENABLE                       (0x00)              /* 0: Enable Tweeter detection judgement */
+#define TAS6754_TWEETER_DETECT_DISABLE                      (0x01)              /* 1: Disable Tweeter detection calculation */
 #define TAS6754_TWEETER_DETECT_RESERVED_MASK                (TAS6754_TWEETER_DETECT_RESERVED_7_4_MASK | \
                                                             TAS6754_TWEETER_DETECT_RESERVED_2_MASK)
 /************************************************************************
@@ -2148,14 +2165,14 @@
 #define TAS6754_TEMP_CH2_145C_155C                          (0x05 << 3)         /* 101: 145°C~155°C */
 #define TAS6754_TEMP_CH2_155C_165C                          (0x06 << 3)         /* 110: 155°C~165°C */
 #define TAS6754_TEMP_CH2_ABOVE_165C                         (0x07 << 3)         /* 111: > 165°C */
-#define TAS6754_TEMP_CH1_BELOW_95C                          (0x00)         /* 000: < 95°C */
-#define TAS6754_TEMP_CH1_95C_110C                           (0x01)         /* 001: 95°C~110°C */
-#define TAS6754_TEMP_CH1_110C_125C                          (0x02)         /* 010: 110°C~125°C */
-#define TAS6754_TEMP_CH1_125C_135C                          (0x03)         /* 011: 125°C~135°C */
-#define TAS6754_TEMP_CH1_135C_145C                          (0x04)         /* 100: 135°C~145°C */
-#define TAS6754_TEMP_CH1_145C_155C                          (0x05)         /* 101: 145°C~155°C */
-#define TAS6754_TEMP_CH1_155C_165C                          (0x06)         /* 110: 155°C~165°C */
-#define TAS6754_TEMP_CH1_ABOVE_165C                         (0x07)         /* 111: > 165°C */
+#define TAS6754_TEMP_CH1_BELOW_95C                          (0x00)              /* 000: < 95°C */
+#define TAS6754_TEMP_CH1_95C_110C                           (0x01)              /* 001: 95°C~110°C */
+#define TAS6754_TEMP_CH1_110C_125C                          (0x02)              /* 010: 110°C~125°C */
+#define TAS6754_TEMP_CH1_125C_135C                          (0x03)              /* 011: 125°C~135°C */
+#define TAS6754_TEMP_CH1_135C_145C                          (0x04)              /* 100: 135°C~145°C */
+#define TAS6754_TEMP_CH1_145C_155C                          (0x05)              /* 101: 145°C~155°C */
+#define TAS6754_TEMP_CH1_155C_165C                          (0x06)              /* 110: 155°C~165°C */
+#define TAS6754_TEMP_CH1_ABOVE_165C                         (0x07)              /* 111: > 165°C */
 #define TAS6754_GET_TEMP_CH2(reg_val)                       ((reg_val & TAS6754_TEMP_CH2_MASK) >> 3)
 #define TAS6754_GET_TEMP_CH1(reg_val)                       (reg_val & TAS6754_TEMP_CH1_MASK)
 /************************************************************************
@@ -2172,14 +2189,14 @@
 #define TAS6754_TEMP_CH4_145C_155C                          (0x05 << 3)         /* 101: 145°C~155°C */
 #define TAS6754_TEMP_CH4_155C_165C                          (0x06 << 3)         /* 110: 155°C~165°C */
 #define TAS6754_TEMP_CH4_ABOVE_165C                         (0x07 << 3)         /* 111: > 165°C */
-#define TAS6754_TEMP_CH3_BELOW_95C                          (0x00)         /* 000: < 95°C */
-#define TAS6754_TEMP_CH3_95C_110C                           (0x01)         /* 001: 95°C~110°C */
-#define TAS6754_TEMP_CH3_110C_125C                          (0x02)         /* 010: 110°C~125°C */
-#define TAS6754_TEMP_CH3_125C_135C                          (0x03)         /* 011: 125°C~135°C */
-#define TAS6754_TEMP_CH3_135C_145C                          (0x04)         /* 100: 135°C~145°C */
-#define TAS6754_TEMP_CH3_145C_155C                          (0x05)         /* 101: 145°C~155°C */
-#define TAS6754_TEMP_CH3_155C_165C                          (0x06)         /* 110: 155°C~165°C */
-#define TAS6754_TEMP_CH3_ABOVE_165C                         (0x07)         /* 111: > 165°C */
+#define TAS6754_TEMP_CH3_BELOW_95C                          (0x00)              /* 000: < 95°C */
+#define TAS6754_TEMP_CH3_95C_110C                           (0x01)              /* 001: 95°C~110°C */
+#define TAS6754_TEMP_CH3_110C_125C                          (0x02)              /* 010: 110°C~125°C */
+#define TAS6754_TEMP_CH3_125C_135C                          (0x03)              /* 011: 125°C~135°C */
+#define TAS6754_TEMP_CH3_135C_145C                          (0x04)              /* 100: 135°C~145°C */
+#define TAS6754_TEMP_CH3_145C_155C                          (0x05)              /* 101: 145°C~155°C */
+#define TAS6754_TEMP_CH3_155C_165C                          (0x06)              /* 110: 155°C~165°C */
+#define TAS6754_TEMP_CH3_ABOVE_165C                         (0x07)              /* 111: > 165°C */
 #define TAS6754_GET_TEMP_CH4(reg_val)                       ((reg_val & TAS6754_TEMP_CH4_MASK) >> 3)
 #define TAS6754_GET_TEMP_CH3(reg_val)                       (reg_val & TAS6754_TEMP_CH3_MASK)
 /************************************************************************
@@ -2220,8 +2237,8 @@
 #define TAS6754_DC_LDG_CH2_S2P_DETECTED                     (0x01 << 2)         /* 1: Short-to-power detected on Channel 2 */
 #define TAS6754_DC_LDG_CH2_OL_NOT_DETECTED                  (0x00 << 1)         /* 0: No open load detected on Channel 2 */
 #define TAS6754_DC_LDG_CH2_OL_DETECTED                      (0x01 << 1)         /* 1: Open load detected on Channel 2 */
-#define TAS6754_DC_LDG_CH2_SL_NOT_DETECTED                  (0x00)         /* 0: No shorted load detected on Channel 2 */
-#define TAS6754_DC_LDG_CH2_SL_DETECTED                      (0x01)         /* 1: Shorted load detected on Channel 2 */
+#define TAS6754_DC_LDG_CH2_SL_NOT_DETECTED                  (0x00)              /* 0: No shorted load detected on Channel 2 */
+#define TAS6754_DC_LDG_CH2_SL_DETECTED                      (0x01)              /* 1: Shorted load detected on Channel 2 */
 #define TAS6754_DC_LDG_CH1_ALL_MASK                         (TAS6754_DC_LDG_CH1_S2G_MASK | \
                                                             TAS6754_DC_LDG_CH1_S2P_MASK | \
                                                             TAS6754_DC_LDG_CH1_OL_MASK | \
@@ -2255,8 +2272,8 @@
 #define TAS6754_DC_LDG_CH4_S2P_DETECTED                     (0x01 << 2)         /* 1: Short-to-power detected on Channel 4 */
 #define TAS6754_DC_LDG_CH4_OL_NOT_DETECTED                  (0x00 << 1)         /* 0: No open load detected on Channel 4 */
 #define TAS6754_DC_LDG_CH4_OL_DETECTED                      (0x01 << 1)         /* 1: Open load detected on Channel 4 */
-#define TAS6754_DC_LDG_CH4_SL_NOT_DETECTED                  (0x00)         /* 0: No shorted load detected on Channel 4 */
-#define TAS6754_DC_LDG_CH4_SL_DETECTED                      (0x01)         /* 1: Shorted load detected on Channel 4 */
+#define TAS6754_DC_LDG_CH4_SL_NOT_DETECTED                  (0x00)              /* 0: No shorted load detected on Channel 4 */
+#define TAS6754_DC_LDG_CH4_SL_DETECTED                      (0x01)              /* 1: Shorted load detected on Channel 4 */
 #define TAS6754_DC_LDG_CH3_ALL_MASK                         (TAS6754_DC_LDG_CH3_S2G_MASK | \
                                                             TAS6754_DC_LDG_CH3_S2P_MASK | \
                                                             TAS6754_DC_LDG_CH3_OL_MASK | \
@@ -2290,8 +2307,8 @@
 #define TAS6754_DC_LDG_CH2_PASSED                           (0x01 << 2)         /* 1: DC Load Diagnostic completed without faults on Channel 2 */
 #define TAS6754_DC_LDG_CH3_FAILED                           (0x00 << 1)         /* 0: DC Load Diagnostic did not complete without faults on Channel 3 */
 #define TAS6754_DC_LDG_CH3_PASSED                           (0x01 << 1)         /* 1: DC Load Diagnostic completed without faults on Channel 3 */
-#define TAS6754_DC_LDG_CH4_FAILED                           (0x00)         /* 0: DC Load Diagnostic did not complete without faults on Channel 4 */
-#define TAS6754_DC_LDG_CH4_PASSED                           (0x01)         /* 1: DC Load Diagnostic completed without faults on Channel 4 */
+#define TAS6754_DC_LDG_CH4_FAILED                           (0x00)              /* 0: DC Load Diagnostic did not complete without faults on Channel 4 */
+#define TAS6754_DC_LDG_CH4_PASSED                           (0x01)              /* 1: DC Load Diagnostic completed without faults on Channel 4 */
 #define TAS6754_DC_LDG_ALL_LO_RESULT_MASK                   (TAS6754_DC_LDG_CH1_LO_RESULT_MASK | \
                                                             TAS6754_DC_LDG_CH2_LO_RESULT_MASK | \
                                                             TAS6754_DC_LDG_CH3_LO_RESULT_MASK | \
@@ -2410,8 +2427,8 @@
 #define TAS6754_TWEETER_REPORT_CH2_DETECTED                 (0x01 << 2)         /* 1: Tweeter detected on Channel 2 */
 #define TAS6754_TWEETER_REPORT_CH3_NOT_DETECTED             (0x00 << 1)         /* 0: No tweeter detected on Channel 3 */
 #define TAS6754_TWEETER_REPORT_CH3_DETECTED                 (0x01 << 1)         /* 1: Tweeter detected on Channel 3 */
-#define TAS6754_TWEETER_REPORT_CH4_NOT_DETECTED             (0x00)         /* 0: No tweeter detected on Channel 4 */
-#define TAS6754_TWEETER_REPORT_CH4_DETECTED                 (0x01)         /* 1: Tweeter detected on Channel 4 */
+#define TAS6754_TWEETER_REPORT_CH4_NOT_DETECTED             (0x00)              /* 0: No tweeter detected on Channel 4 */
+#define TAS6754_TWEETER_REPORT_CH4_DETECTED                 (0x01)              /* 1: Tweeter detected on Channel 4 */
 #define TAS6754_TWEETER_REPORT_ALL_CH_MASK                  (TAS6754_TWEETER_REPORT_CH1_MASK | \
                                                             TAS6754_TWEETER_REPORT_CH2_MASK | \
                                                             TAS6754_TWEETER_REPORT_CH3_MASK | \
@@ -2523,14 +2540,14 @@
 #define TAS6754_OTW_CTRL_CH1_145C                           (0x05 << 4)         /* 101: >145°C */
 #define TAS6754_OTW_CTRL_CH1_155C                           (0x06 << 4)         /* 110: >155°C */
 #define TAS6754_OTW_CTRL_CH1_165C                           (0x07 << 4)         /* 111: >165°C */
-#define TAS6754_OTW_CTRL_CH2_DISABLED                       (0x00)         /* 000: OTW disabled */
-#define TAS6754_OTW_CTRL_CH2_95C                            (0x01)         /* 001: >95°C */
-#define TAS6754_OTW_CTRL_CH2_110C                           (0x02)         /* 010: >110°C */
-#define TAS6754_OTW_CTRL_CH2_125C                           (0x03)         /* 011: >125°C */
-#define TAS6754_OTW_CTRL_CH2_135C                           (0x04)         /* 100: >135°C */
-#define TAS6754_OTW_CTRL_CH2_145C                           (0x05)         /* 101: >145°C */
-#define TAS6754_OTW_CTRL_CH2_155C                           (0x06)         /* 110: >155°C */
-#define TAS6754_OTW_CTRL_CH2_165C                           (0x07)         /* 111: >165°C */
+#define TAS6754_OTW_CTRL_CH2_DISABLED                       (0x00)              /* 000: OTW disabled */
+#define TAS6754_OTW_CTRL_CH2_95C                            (0x01)              /* 001: >95°C */
+#define TAS6754_OTW_CTRL_CH2_110C                           (0x02)              /* 010: >110°C */
+#define TAS6754_OTW_CTRL_CH2_125C                           (0x03)              /* 011: >125°C */
+#define TAS6754_OTW_CTRL_CH2_135C                           (0x04)              /* 100: >135°C */
+#define TAS6754_OTW_CTRL_CH2_145C                           (0x05)              /* 101: >145°C */
+#define TAS6754_OTW_CTRL_CH2_155C                           (0x06)              /* 110: >155°C */
+#define TAS6754_OTW_CTRL_CH2_165C                           (0x07)              /* 111: >165°C */
 #define TAS6754_OTW_CTRL_CH1_CH2_RESERVED_MASK              (TAS6754_OTW_CTRL_RESERVED_7_MASK | \
                                                             TAS6754_OTW_CTRL_RESERVED_3_MASK)
 /************************************************************************
@@ -2548,14 +2565,14 @@
 #define TAS6754_OTW_CTRL_CH3_145C                           (0x05 << 4)         /* 101: >145°C */
 #define TAS6754_OTW_CTRL_CH3_155C                           (0x06 << 4)         /* 110: >155°C */
 #define TAS6754_OTW_CTRL_CH3_165C                           (0x07 << 4)         /* 111: >165°C */
-#define TAS6754_OTW_CTRL_CH4_DISABLED                       (0x00)         /* 000: OTW disabled */
-#define TAS6754_OTW_CTRL_CH4_95C                            (0x01)         /* 001: >95°C */
-#define TAS6754_OTW_CTRL_CH4_110C                           (0x02)         /* 010: >110°C */
-#define TAS6754_OTW_CTRL_CH4_125C                           (0x03)         /* 011: >125°C */
-#define TAS6754_OTW_CTRL_CH4_135C                           (0x04)         /* 100: >135°C */
-#define TAS6754_OTW_CTRL_CH4_145C                           (0x05)         /* 101: >145°C */
-#define TAS6754_OTW_CTRL_CH4_155C                           (0x06)         /* 110: >155°C */
-#define TAS6754_OTW_CTRL_CH4_165C                           (0x07)         /* 111: >165°C */
+#define TAS6754_OTW_CTRL_CH4_DISABLED                       (0x00)              /* 000: OTW disabled */
+#define TAS6754_OTW_CTRL_CH4_95C                            (0x01)              /* 001: >95°C */
+#define TAS6754_OTW_CTRL_CH4_110C                           (0x02)              /* 010: >110°C */
+#define TAS6754_OTW_CTRL_CH4_125C                           (0x03)              /* 011: >125°C */
+#define TAS6754_OTW_CTRL_CH4_135C                           (0x04)              /* 100: >135°C */
+#define TAS6754_OTW_CTRL_CH4_145C                           (0x05)              /* 101: >145°C */
+#define TAS6754_OTW_CTRL_CH4_155C                           (0x06)              /* 110: >155°C */
+#define TAS6754_OTW_CTRL_CH4_165C                           (0x07)              /* 111: >165°C */
 #define TAS6754_OTW_CTRL_CH3_CH4_RESERVED_MASK              (TAS6754_OTW_CTRL_RESERVED_7_MASK | \
                                                             TAS6754_OTW_CTRL_RESERVED_3_MASK)
 
