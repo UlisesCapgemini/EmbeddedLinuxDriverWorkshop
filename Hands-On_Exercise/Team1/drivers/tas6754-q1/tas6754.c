@@ -33,12 +33,26 @@
 #define TAS6754_FAULT_CHECK_500MS 	 	(500)
 #define TAS6754_FAULT_CHECK_INTERVAL 	TAS6754_FAULT_CHECK_200MS
 
-/* Order of array elements for supplies follows power-down sequence from datasheet, which is recommended to disable PVDD and VBAT first, then DVDD */
+/** 
+* @brief: When using the Linux regulator framework APIs, regulators are typically enabled in the order they appear
+* in the array and disabled in reverse order.
+* So, if your array has indices 0, 1, 2, the power-up sequence would access them in order 0→1→2,
+* and the power-down sequence would access them in order 2→1→0.
+*
+* This ensures that during power-up, VBAT is applied before DVDD, avoiding the documented fault condition from the datasheet.
+* 
+* Recommended power-down sequence from the datasheet (PVDD and VBAT first, then DVDD).
+* But, he power-down sequence isn't perfect according to the recommendation from the datasheer, but it's likely less critical than
+* the power-up sequence.
+* If the power-down sequence is absolutely critical, you might need to implement custom power management logic beyond just 
+* using the regulator framework's default behavior.
+*/
 static const char * const tas6754_supply_names[] = {
-    "pvdd", /* Class-D amp output FETs supply. */
-    "vbat", /* Supply used for higher voltage analog circuits. */
-    "dvdd", /* Digital power supply. Connect to 3.3-V supply. */
+    "pvdd",		/* Class-D amp output FETs supply. */
+    "vbat", 	/* Supply used for higher voltage analog circuits. */
+    "dvdd" 		/* Digital power supply. Connect to 3.3-V supply. */
 };
+
 #define TAS6754_NUM_SUPPLIES ARRAY_SIZE(tas6754_supply_names)
 
 struct tas6754_data {
@@ -53,7 +67,7 @@ struct tas6754_data {
 	unsigned int last_rtldg_ol_sl_fault;
 	struct gpio_desc *pd_gpio;
     struct gpio_desc *stby_gpio;
-	//struct gpio_desc *mute_gpio;//TODO: Check mute handling via registers or GPIO additional config?
+	struct gpio_desc *mute_gpio; /* GPIO for external mute circuit (optional)*/
 
     /* Audio interface configuration (ENHANCED)*/
     bool tdm_mode;                		/* Whether in TDM mode */
@@ -77,7 +91,8 @@ struct tas6754_data {
 	//unsigned int detected_sclk_ratio; /* TODO: [Optional] SCLK ratio detected by the device. Useful for:*/
 															/*-Debugging
 															-Potentially adjusting settings based on the detected ratio
-															-Reporting the ratio through sysfs or debugfs*/
+															-Reporting the ratio through sysfs or debugfs*/															
+	//tas6754->powered = false;			/* TODO: [Desired] Power State Tracking: Consider adding a state variable to track power state */
 
 };
 
@@ -105,7 +120,6 @@ static const struct snd_kcontrol_new tas6754_snd_controls[] = {
 	SOC_SINGLE_STROBE("Auto Diagnostics Switch", TAS6754_DC_DIAG_CTRL1,
 			  TAS6754_LDGBYPASS_SHIFT, 1),
 };*/
-
 
 /**
  * TODO:
@@ -245,7 +259,66 @@ static const struct soc_enum tas6754_ch_map_config_enum =
  * @brief: This array defines the audio signal path through the TAS6754 Class-D amplifier using the
  * ALSA DAPM (Dynamic Audio Power Management) framework. The widgets represent the
  * functional blocks in the audio path from digital input to analog output, with per-channel
- * processing capabilities.*/
+ * processing capabilities.
+ *
+ * Widget Types and Functions:
+ *
+ * 1. AIF_IN ("AIF IN"):
+ *    - Represents the digital audio input interface
+ *    - Receives I2S or TDM format audio data from the system
+ *    - Supports 2-4 channels via I2S or 4-16 channels via TDM
+ *    - Handles sample rates from 44.1kHz to 192kHz
+ *
+ * 2. MUX ("CHx Map"):
+ *    - Implements channel mapping functionality for each output channel
+ *    - Allows selection of input source (Slot 1-4 or LL Slot 5-8) for each channel
+ *    - Enables flexible routing between input slots and output channels
+ *    - Connected to the tas6754_chx_mux controls for user configuration
+ *
+ * 3. DSP ("DSP"):
+ *    - Represents the digital signal processing block
+ *    - Handles audio processing for all channels
+ *    - Implements the Dual Audio DSP Subsystem functionality
+ *    - Currently implemented without an event handler (power managed by DAC widgets)
+ *    - TODO note discusses potential for dedicated event handler implementation
+ *
+ * 4. PGA ("CHx Volume"):
+ *    - Programmable Gain Amplifier widgets for volume control
+ *    - Provides independent digital volume control for each channel
+ *    - Maps to the digital volume control registers (0x40-0x43)
+ *    - Range from 0dB to -103dB in 0.5dB steps
+ *
+ * 5. DAC_E ("CHx DAC"):
+ *    - Digital-to-PWM converter widgets with event handlers
+ *    - Converts digital audio to PWM signals for Class-D amplification
+ *    - Uses tas6754_dac_event handler for power management
+ *    - Handles POST_PMU (power-up) and PRE_PMD (power-down) events
+ *    - Manages fault monitoring and recovery
+ *
+ * 6. OUT_DRV ("CHx DRV"):
+ *    - Output driver stage widgets
+ *    - Represents the gate drivers and power FET stages
+ *    - Delivers high-efficiency Class-D amplification
+ *    - One driver per channel for independent operation
+ *
+ * 7. OUTPUT ("OUTx"):
+ *    - Physical output widgets
+ *    - Represents the bridge-tied load (BTL) outputs to speakers
+ *    - Four independent output channels
+ *    - Capable of delivering up to 30W per channel into 4Ω loads
+ *
+ * Power Management:
+ * - The widgets use SND_SOC_NOPM (No Power Management) for register control
+ * - Actual power management is handled by the tas6754_dac_event handler
+ * - This handler manages power sequencing and fault monitoring
+ * - The handler is called during power-up (POST_PMU) and power-down (PRE_PMD)
+ *
+ * Note on DSP Event Handler:
+ * The TODO comment discusses whether a separate tas6754_dsp_event handler should be
+ * implemented for the DSP widget. Currently, power management for the entire device
+ * is handled by the DAC event handlers. A separate DSP handler could be added for
+ * more granular control if needed in the future.
+ */
 static const struct snd_soc_dapm_widget tas6754_dapm_widgets[] = {
     /* Digital Input */
     SND_SOC_DAPM_AIF_IN("AIF IN", "Playback", 0, SND_SOC_NOPM, 0, 0),
@@ -1197,7 +1270,6 @@ static int tas6754_configure_sdin2(struct snd_soc_component *component, int gpio
     return 0;
 }
 
-
 /* ALSA Controls for Low Latency Configuration */
 
 //TODO: understand the purpose of this function and adapt as needed
@@ -1376,7 +1448,6 @@ static int tas6754_ll_swap_put(struct snd_kcontrol *kcontrol,
     return 1;
 }
 
-
 /**
  * TAS6754 ALSA Controls
  *
@@ -1478,85 +1549,131 @@ static const struct snd_kcontrol_new tas6754_snd_controls[] = {
 };
 
 
-
-
-/* TODO: double check how to implemente mute in tas6754 */
+/**
+ * tas6754_mute - Mute or unmute all channels
+ * @brief: Mutes or unmutes all channels of the TAS6754 amplifier.
+ * Unlike the TAS6424, the TAS6754 doesn't have a dedicated MUTE pin,
+ * so we control muting through the channel state registers.
+ * 
+ * When muting, we keep the channels in PLAY state but set the mute bit.
+ * When unmuting, we keep the channels in PLAY state and clear the mute bit.
+ * 
+ * @dai: DAI instance
+ * @mute: Mute state (1 = mute, 0 = unmute)
+ * @direction: Stream direction (not used)
+ *
+ * @return: Return 0 on success, negative error code on failure
+ */
 static int tas6754_mute(struct snd_soc_dai *dai, int mute, int direction)
 {
-	struct snd_soc_component *component = dai->component;
-	struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
-	unsigned int val;
+    struct snd_soc_component *component = dai->component;
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
 
-	dev_dbg(component->dev, "%s() mute=%d\n", __func__, mute);
+    dev_dbg(component->dev, "%s() mute=%d\n", __func__, mute);
 
-	if (tas6754->mute_gpio) {
-		gpiod_set_value_cansleep(tas6754->mute_gpio, mute);
-		return 0;
-	}
+    /* If a mute GPIO is defined (for external muting circuit), use it */
+    if (tas6754->mute_gpio) {
+        gpiod_set_value_cansleep(tas6754->mute_gpio, mute);
+        return 0;
+    }
 
-	if (mute)
-		val = TAS6754_ALL_STATE_MUTE;
-	else
-		val = TAS6754_ALL_STATE_PLAY;
+    /* Otherwise use register control to mute/unmute all channels */
+    if (mute) {
+        /* Set channels to PLAY state but with mute bit set */
+        snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_PLAY__MUTE);
+        snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_PLAY__MUTE);
+    } else {
+        /* Set channels to PLAY state with normal volume (no mute) */
+        snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_PLAY__NORMAL_VOLUME);
+        snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_PLAY__NORMAL_VOLUME);
+    }
 
-	snd_soc_component_write(component, TAS6754_CH_STATE_CTRL, val);
-
-	return 0;
+    return 0;
 }
 
-
-
-
-
-
-
 /**
- * Power-Down Sequence
- * @brief To power-down the device, first set the STBY pin or PD pin low for at least 10ms before removing PVDD, VBAT 
- * or DVDD. After 10ms, the power supplies can be removed. Removing PVDD and VBAT first is recommended 
- * before removing the DVDD supply. 
+ * tas6754_power_off - Power down the TAS6754 amplifier
+ * @component: The component instance
+ *
+ * This function powers down the TAS6754 amplifier following the recommended
+ * power-down sequence from the datasheet:
+ * 1. Put channels in HI-Z state to prevent pops/clicks
+ * 2. Put device in standby (DEEP SLEEP) mode
+ * 3. Wait 10ms before removing power
+ * 4. Assert PD pin for complete shutdown
+ * 5. Disable power supplies in the correct sequence
+ *
+ * Return: 0 on success, negative error code on failure
  */
 static int tas6754_power_off(struct snd_soc_component *component)
 {
-	struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
-	int ret;
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    int ret;
 
-	//dev_dbg(component->dev, "%s: Powering off TAS6754\n", __func__);
+    dev_dbg(component->dev, "%s: Powering off TAS6754\n", __func__);
 
-	/* Put all channels in HiZ state to prevent pops/click, effectively disconnecting outputs for safety.*/
-	snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_STATE_HIZ);
-	snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_STATE_HIZ);
-
-	/* Switch regmap to cache-only mode to preserve settings */
-	regcache_cache_only(tas6754->regmap, true);
-	regcache_mark_dirty(tas6754->regmap);
-
-	/* Put device in standby (DEEP SLEEP mode) */
-	if (tas6754->stby_gpio){
-		gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
-	}
-	else{
-		/* If no GPIO, use fallback to state control register for setting standby (DEEP SLEEP mode)*/
-		snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, 
-							TAS6754_STATE_CTRL_CH1_CH2_STATE_DEEP_SLEEP);
-		snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, 
-							TAS6754_STATE_CTRL_CH3_CH4_STATE_DEEP_SLEEP);
-
+    /* If using external mute circuit, ensure it's muted before power-off */
+    if (tas6754->mute_gpio){
+        gpiod_set_value_cansleep(tas6754->mute_gpio, 1);
+	} else {
+    /* If no external mute circuit, muting will be handled by HI-Z state */
+    dev_dbg(component->dev, "No mute GPIO, using HI-Z state for muting\n");
 	}
 
-	/* Wait at least 10ms before removing power supplies as per datasheet */
-	msleep(10);
-
-	/* For complete shutdown, assert PD pin
-     * This will reset all registers on next power-up */
-	if (tas6754->pd_gpio){
-		gpiod_set_value_cansleep(tas6754->pd_gpio, 0);
+    /* Put all channels in HI-Z state to prevent pops/clicks.
+	   The HI-Z state effectively disconnects the outputs, which serves the same purpose as muting. */
+	ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_HIZ);
+	if (ret < 0) {
+		dev_err(component->dev, "Failed to set CH1/CH2 to HI-Z: %d\n", ret);
+		return ret;
+	}
+	ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_HIZ);
+	if (ret < 0) {
+		dev_err(component->dev, "Failed to set CH3/CH4 to HI-Z: %d\n", ret);
+		return ret;
 	}
 
-	/*
-	TODO[DTS]: 	To ensure regulators are disabled in the correct sequence (PVDD and VBAT first, then DVDD),
+    /* If STDY GPIO pin configured */
+    if (tas6754->stby_gpio) {
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 0); /* Set low (active) */
+    } else {
+        /* If no STDY GPIO pin configured, use register control for DEEP SLEEP mode */
+        ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_DEEP_SLEEP);
+		if (ret < 0) {
+			dev_err(component->dev, "Failed to set CH1/CH2 to DEEP SLEEP: %d\n", ret);
+			return ret;
+		}
+        ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_DEEP_SLEEP);
+		if (ret < 0) {
+			dev_err(component->dev, "Failed to set CH3/CH4 to DEEP SLEEP: %d\n", ret);
+			return ret;
+		}
+    }
+
+    /* Wait at least 10ms before removing power supplies as per datasheet */
+    msleep(10);
+
+    /* Switch regmap to cache-only mode to preserve settings */
+	/* regcache operations after the register writes to ensure the writes take effect */
+    regcache_cache_only(tas6754->regmap, true);
+    regcache_mark_dirty(tas6754->regmap);
+
+    /* For complete shutdown, assert PD pin */
+	if (tas6754->pd_gpio) {
+		gpiod_set_value_cansleep(tas6754->pd_gpio, 0); /* Set low (active) */
+	} else {
+		/* 
+		* No PD GPIO available. The device will remain in DEEP_SLEEP mode
+		* until power supplies are removed. This is not a complete shutdown
+		* but the lowest power state achievable without PD pin control.
+		*/
+		dev_dbg(component->dev, "No PD GPIO, device will remain in DEEP_SLEEP until power removed\n");
+    }
+
+	/** 
+	* @TODO:[DTS]To ensure regulators are disabled in the correct sequence (PVDD and VBAT first, then DVDD),
 				you should define them in the correct order in your device structure and device tree.
-				The Linux regulator framework will disable them in reverse order of enabling.
+				
 	Example device tree snippet:			
 	tas6754: audio-codec@70 {
     compatible = "ti,tas6754";
@@ -1570,18 +1687,25 @@ static int tas6754_power_off(struct snd_soc_component *component)
     stby-gpio = <&gpio1 16 GPIO_ACTIVE_HIGH>;
     // other properties 
 	};*/
-	
 
-	/* Disable all regulators in the recommended sequence. PVDD -> VBAT -> DVDD */
-	ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
-	if (ret < 0) {
-		dev_err(component->dev, "failed to disable supplies: %d\n", ret);
-		return ret;
-	}
+	/** 
+	* @TODO:
+	* Recommended power-down sequence from the datasheet (PVDD and VBAT first, then DVDD).
+	* But, the power-down sequence isn't perfect according to the recommendation from the datasheet, but it's likely less critical than
+	* the power-up sequence.
+	* If the power-down sequence is absolutely critical, you might need to implement custom power management logic beyond just 
+	* using the regulator framework's default behavior.
+	* The Linux regulator framework will disable them in reverse order of enabling as per tas6754_supply_names[] definition */
+    ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+    if (ret < 0) {
+        dev_err(component->dev, "failed to disable supplies: %d\n", ret);
+        return ret;
+    }
 
-	//dev_dbg(component->dev, "%s: TAS6754 powered off\n", __func__);
-	return 0;
+    dev_dbg(component->dev, "%s: TAS6754 powered off\n", __func__);
+    return 0;
 }
+
 
 static int tas6754_power_on(struct snd_soc_component *component)
 {
@@ -1591,7 +1715,8 @@ static int tas6754_power_on(struct snd_soc_component *component)
 	int no_auto_diags = 0;
 	unsigned int reg_val;
 
-	
+	dev_dbg(component->dev, "%s: Powering on TAS6754\n", __func__);
+
 	if (!regmap_read(tas6754->regmap, TAS6754_DC_LDG_CTRL, &reg_val))
 		no_auto_diags = reg_val & TAS6754_DC_LDG_BYPASS_MASK;
 
@@ -1610,18 +1735,37 @@ static int tas6754_power_on(struct snd_soc_component *component)
 		return ret;
 	}
 
-	if (tas6754->mute_gpio) {
-		gpiod_set_value_cansleep(tas6754->mute_gpio, 0);
-		/*
-		 * channels are muted via the mute pin.  Don't also mute
-		 * them via the registers so that subsequent register
-		 * access is not necessary to un-mute the channels
-		 */
-		chan_states = TAS6754_ALL_STATE_PLAY;
-	} else {
-		chan_states = TAS6754_ALL_STATE_MUTE;
-	}
-	snd_soc_component_write(component, TAS6754_CH_STATE_CTRL, chan_states);
+	/* Set initial channel states */
+    if (tas6754->mute_gpio) {
+        /* If using external mute circuit, set channels to PLAY state */
+        /* but keep them muted via the GPIO */
+        gpiod_set_value_cansleep(tas6754->mute_gpio, 1); /* Muted */
+        
+        /* Set channels to PLAY state with normal volume in registers */
+        ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_PLAY__NORMAL_VOLUME);
+		if (ret < 0) {
+			dev_err(component->dev, "Failed to set CH1/CH2 to PLAY state with NORMAL VOLUME: %d\n", ret);
+			return ret;
+		}
+
+        ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_PLAY__NORMAL_VOLUME);
+		if (ret < 0) {
+			dev_err(component->dev, "Failed to set CH3/CH4 to PLAY state with NORMAL VOLUME: %d\n", ret);
+			return ret;
+		}
+    } else {
+        /* If no external mute circuit, set channels to PLAY state but muted */
+        ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_PLAY__MUTE);
+		if (ret < 0) {
+			dev_err(component->dev, "Failed to set CH1/CH2 to PLAY state but MUTE: %d\n", ret);
+			return ret;
+		}
+        ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_PLAY__MUTE);
+		if (ret < 0) {
+			dev_err(component->dev, "Failed to set CH3/CH4 to PLAY state but MUTE: %d\n", ret);
+			return ret;
+		}
+    }
 
 	/* any time we come out of HIZ, the output channels automatically run DC
 	 * load diagnostics if autodiagnotics are enabled. wait here until this
@@ -1630,6 +1774,7 @@ static int tas6754_power_on(struct snd_soc_component *component)
 	if (!no_auto_diags)
 		msleep(230);
 
+	dev_dbg(component->dev, "%s: TAS6754 powered on\n", __func__);
 	return 0;
 }
 
@@ -1669,7 +1814,7 @@ static const struct snd_soc_dai_ops tas6754_speaker_dai_ops = {
 	.hw_params	= tas6754_hw_params,//ok
 	.set_fmt	= tas6754_set_dai_fmt,//ok
 	.set_tdm_slot	= tas6754_set_dai_tdm_slot,//ok
-	.mute_stream	= tas6754_mute,//pending
+	.mute_stream	= tas6754_mute,//ok
 	.no_capture_mute = 1,
 };
 
@@ -2244,26 +2389,37 @@ static int tas6754_i2c_probe(struct i2c_client *client)
 		tas6754->stby_gpio = NULL;
 	}
 
-
-	/* tas6424: Mutes the device outputs (active low), 100-kΩ internal pulldown resistor */
-
-	/*
-	 * Get control of the mute pin and set it HIGH in order to start with
-	 * all the output muted.
-	 * Note: The actual pin polarity is taken care of in the GPIO lib
-	 * according the polarity specified in the DTS.
-	 */
-	tas6754->mute_gpio = devm_gpiod_get_optional(dev, "mute",
-						      GPIOD_OUT_HIGH);
+	/**
+	 * @TODO:[DTS] Double check this configuration in DTS
+	 * 
+	 * tas6754: audio-codec@4c {
+	 * compatible = "ti,tas6754";
+	 * reg = <0x4c>;
+	 * #sound-dai-cells = <0>;
+    /* Optional external mute circuit */
+    // mute-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;    
+    /* Other properties */
+	//};
 	
-	tas6754->pd_gpio = devm_gpiod_get_optional(tas6754->dev, "pd", GPIOD_OUT_HIGH);							  
-	if (IS_ERR(tas6754->pd_gpio)) {
-		if (PTR_ERR(tas6754->pd_gpio) == -EPROBE_DEFER)
-			return -EPROBE_DEFER;
-		dev_info(dev, "failed to get PD GPIO: %ld\n",
-			PTR_ERR(tas6754->pd_gpio));
-		tas6754->pd_gpio = NULL;
-	}
+	/*
+	/* Get optional mute GPIO: 
+     * Even though TAS6754 Class-D amplifier doesn't have a dedicated MUTE pin,
+     * we support an optional external mute circuit controlled by GPIO.
+     * Set it HIGH initially to start with outputs muted.
+     */
+    tas6754->mute_gpio = devm_gpiod_get_optional(dev, "mute", GPIOD_OUT_HIGH);
+    if (IS_ERR(tas6754->mute_gpio)) {
+        if (PTR_ERR(tas6754->mute_gpio) == -EPROBE_DEFER)
+            return -EPROBE_DEFER;
+        dev_info(dev, "No external mute GPIO, using register control for muting\n");
+        tas6754->mute_gpio = NULL;
+    } else if (tas6754->mute_gpio) {
+        dev_info(dev, "Using external mute GPIO\n");
+        /* Start with mute active (HIGH) */
+        gpiod_set_value_cansleep(tas6754->mute_gpio, 1);
+    }
+
+
 
 	for (i = 0; i < ARRAY_SIZE(tas6754->supplies); i++)
 		tas6754->supplies[i].supply = tas6754_supply_names[i];

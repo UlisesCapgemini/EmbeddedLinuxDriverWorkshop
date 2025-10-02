@@ -214,15 +214,21 @@
 #define TAS6754_STATE_CTRL_CH1_PLAY                         (0x04 << 4)         /* 100: PLAY */
 #define TAS6754_STATE_CTRL_CH2_NORMAL_VOLUME                (0x00 << 3)         /* 0: Normal volume */
 #define TAS6754_STATE_CTRL_CH2_MUTE                         (0x01 << 3)         /* 1: Mute */
-#define TAS6754_STATE_CTRL_CH2_DEEP_SLEEP                   (0x00)         /* 000: DEEP SLEEP */
-#define TAS6754_STATE_CTRL_CH2_LOAD_DIAG                    (0x01)         /* 001: LOAD DIAG */
-#define TAS6754_STATE_CTRL_CH2_SLEEP                        (0x02)         /* 010: SLEEP */
-#define TAS6754_STATE_CTRL_CH2_HIZ                          (0x03)         /* 011: HI-Z */
-#define TAS6754_STATE_CTRL_CH2_PLAY                         (0x04)         /* 100: PLAY */
-#define TAS6754_STATE_CTRL_CH1_CH2_STATE_DEEP_SLEEP	        (TAS6754_STATE_CTRL_CH1_DEEP_SLEEP | \
-					                                        TAS6754_STATE_CTRL_CH2_DEEP_SLEEP)
-#define TAS6754_STATE_CTRL_CH1_CH2_STATE_HIZ		        (TAS6754_STATE_CTRL_CH1_HIZ | \
-					                                        TAS6754_STATE_CTRL_CH2_HIZ)
+#define TAS6754_STATE_CTRL_CH2_DEEP_SLEEP                   (0x00)              /* 000: DEEP SLEEP */
+#define TAS6754_STATE_CTRL_CH2_LOAD_DIAG                    (0x01)              /* 001: LOAD DIAG */
+#define TAS6754_STATE_CTRL_CH2_SLEEP                        (0x02)              /* 010: SLEEP */
+#define TAS6754_STATE_CTRL_CH2_HIZ                          (0x03)              /* 011: HI-Z */
+#define TAS6754_STATE_CTRL_CH2_PLAY                         (0x04)              /* 100: PLAY */
+/* Combined values */
+#define TAS6754_STATE_CTRL_CH1_CH2_NORMAL_VOLUME            (TAS6754_STATE_CTRL_CH1_NORMAL_VOLUME | TAS6754_STATE_CTRL_CH2_NORMAL_VOLUME)
+#define TAS6754_STATE_CTRL_CH1_CH2_MUTE                     (TAS6754_STATE_CTRL_CH1_MUTE | TAS6754_STATE_CTRL_CH2_MUTE)
+#define TAS6754_STATE_CTRL_CH1_CH2_DEEP_SLEEP	            (TAS6754_STATE_CTRL_CH1_DEEP_SLEEP | TAS6754_STATE_CTRL_CH2_DEEP_SLEEP)
+#define TAS6754_STATE_CTRL_CH1_CH2_LOAD_DIAG	            (TAS6754_STATE_CTRL_CH1_LOAD_DIAG | TAS6754_STATE_CTRL_CH2_LOAD_DIAG)
+#define TAS6754_STATE_CTRL_CH1_CH2_SLEEP	                (TAS6754_STATE_CTRL_CH1_SLEEP | TAS6754_STATE_CTRL_CH2_SLEEP)
+#define TAS6754_STATE_CTRL_CH1_CH2_HIZ		                (TAS6754_STATE_CTRL_CH1_HIZ | TAS6754_STATE_CTRL_CH2_HIZ)
+#define TAS6754_STATE_CTRL_CH1_CH2_PLAY                     (TAS6754_STATE_CTRL_CH1_PLAY | TAS6754_STATE_CTRL_CH2_PLAY)
+#define TAS6754_STATE_CTRL_CH1_CH2_PLAY__NORMAL_VOLUME      (TAS6754_STATE_CTRL_CH1_CH2_PLAY | TAS6754_STATE_CTRL_CH1_CH2_NORMAL_VOLUME)
+#define TAS6754_STATE_CTRL_CH1_CH2_PLAY__MUTE               (TAS6754_STATE_CTRL_CH1_CH2_PLAY | TAS6754_STATE_CTRL_CH1_CH2_MUTE)
 /************************************************************************
  *					TAS6754_STATE_CTRL_CH3_CH4 (0x04) (R/W)
  ************************************************************************/
@@ -230,6 +236,7 @@
 #define TAS6754_STATE_CTRL_CH3_STATE_MASK                   GENMASK(6, 4)       /* Bits 6-4: CH3 STATE CTRL */
 #define TAS6754_STATE_CTRL_CH4_MUTE_MASK                    BIT(3)              /* Bit 3: CH4 MUTE */
 #define TAS6754_STATE_CTRL_CH4_STATE_MASK                   GENMASK(2, 0)       /* Bits 2-0: CH4 STATE CTRL */
+
 #define TAS6754_STATE_CTRL_CH3_NORMAL_VOLUME                (0x00 << 7)         /* 0: Normal volume */
 #define TAS6754_STATE_CTRL_CH3_MUTE                         (0x01 << 7)         /* 1: Mute */
 #define TAS6754_STATE_CTRL_CH3_DEEP_SLEEP                   (0x00 << 4)         /* 000: DEEP SLEEP */
@@ -237,17 +244,24 @@
 #define TAS6754_STATE_CTRL_CH3_SLEEP                        (0x02 << 4)         /* 010: SLEEP */
 #define TAS6754_STATE_CTRL_CH3_HIZ                          (0x03 << 4)         /* 011: HI-Z */
 #define TAS6754_STATE_CTRL_CH3_PLAY                         (0x04 << 4)         /* 100: PLAY */
+
 #define TAS6754_STATE_CTRL_CH4_NORMAL_VOLUME                (0x00 << 3)         /* 0: Normal volume */
 #define TAS6754_STATE_CTRL_CH4_MUTE                         (0x01 << 3)         /* 1: Mute */
-#define TAS6754_STATE_CTRL_CH4_DEEP_SLEEP                   (0x00)         /* 000: DEEP SLEEP */
-#define TAS6754_STATE_CTRL_CH4_LOAD_DIAG                    (0x01)         /* 001: LOAD DIAG */
-#define TAS6754_STATE_CTRL_CH4_SLEEP                        (0x02)         /* 010: SLEEP */
-#define TAS6754_STATE_CTRL_CH4_HIZ                          (0x03)         /* 011: HI-Z */
-#define TAS6754_STATE_CTRL_CH4_PLAY                         (0x04)         /* 100: PLAY */
-#define TAS6754_STATE_CTRL_CH3_CH4_STATE_DEEP_SLEEP	        (TAS6754_STATE_CTRL_CH3_DEEP_SLEEP | \
-					                                        TAS6754_STATE_CTRL_CH4_DEEP_SLEEP)
-#define TAS6754_STATE_CTRL_CH3_CH4_STATE_HIZ		        (TAS6754_STATE_CTRL_CH3_HIZ | \
-					                                        TAS6754_STATE_CTRL_CH4_HIZ)
+#define TAS6754_STATE_CTRL_CH4_DEEP_SLEEP                   (0x00)              /* 000: DEEP SLEEP */
+#define TAS6754_STATE_CTRL_CH4_LOAD_DIAG                    (0x01)              /* 001: LOAD DIAG */
+#define TAS6754_STATE_CTRL_CH4_SLEEP                        (0x02)              /* 010: SLEEP */
+#define TAS6754_STATE_CTRL_CH4_HIZ                          (0x03)              /* 011: HI-Z */
+#define TAS6754_STATE_CTRL_CH4_PLAY                         (0x04)              /* 100: PLAY */
+/* Combined values */
+#define TAS6754_STATE_CTRL_CH3_CH4_NORMAL_VOLUME            (TAS6754_STATE_CTRL_CH3_NORMAL_VOLUME | TAS6754_STATE_CTRL_CH4_NORMAL_VOLUME)
+#define TAS6754_STATE_CTRL_CH3_CH4_MUTE                     (TAS6754_STATE_CTRL_CH3_MUTE | TAS6754_STATE_CTRL_CH4_MUTE)
+#define TAS6754_STATE_CTRL_CH3_CH4_DEEP_SLEEP	            (TAS6754_STATE_CTRL_CH3_DEEP_SLEEP | TAS6754_STATE_CTRL_CH4_DEEP_SLEEP)
+#define TAS6754_STATE_CTRL_CH3_CH4_LOAD_DIAG	            (TAS6754_STATE_CTRL_CH3_LOAD_DIAG | TAS6754_STATE_CTRL_CH4_LOAD_DIAG)
+#define TAS6754_STATE_CTRL_CH3_CH4_SLEEP	                (TAS6754_STATE_CTRL_CH3_SLEEP | TAS6754_STATE_CTRL_CH4_SLEEP)
+#define TAS6754_STATE_CTRL_CH3_CH4_HIZ		                (TAS6754_STATE_CTRL_CH3_HIZ | TAS6754_STATE_CTRL_CH4_HIZ)
+#define TAS6754_STATE_CTRL_CH3_CH4_PLAY                     (TAS6754_STATE_CTRL_CH3_PLAY | TAS6754_STATE_CTRL_CH4_PLAY)
+#define TAS6754_STATE_CTRL_CH3_CH4_PLAY__NORMAL_VOLUME      (TAS6754_STATE_CTRL_CH3_CH4_PLAY | TAS6754_STATE_CTRL_CH3_CH4_NORMAL_VOLUME)
+#define TAS6754_STATE_CTRL_CH3_CH4_PLAY__MUTE               (TAS6754_STATE_CTRL_CH3_CH4_PLAY | TAS6754_STATE_CTRL_CH3_CH4_MUTE)
 /************************************************************************
  *					TAS6754_ISENSE_CTRL (0x05) (R/W)
  ************************************************************************/
