@@ -1608,16 +1608,13 @@ static int tas6754_mute(struct snd_soc_dai *dai, int mute, int direction)
 }
 
 /**
- * tas6754_power_off - Power down the TAS6754 amplifier
- * @component: The component instance
+ * tas6754_power_off - Power off the TAS6754 audio amplifier
+ * @component: The ALSA SoC component representing the TAS6754
  *
- * This function powers down the TAS6754 amplifier following the recommended
- * power-down sequence from the datasheet:
- * 1. Put channels in HI-Z state to prevent pops/clicks
- * 2. Put device in standby (DEEP SLEEP) mode
- * 3. Wait 10ms before removing power
- * 4. Assert PD pin for complete shutdown
- * 5. Disable power supplies in the correct sequence
+ * This function implements the power-off sequence for the TAS6754 Class-D
+ * amplifier according to the datasheet specifications. The sequence includes:
+ * muting outputs, putting channels in HI-Z state, setting STBY pin low,
+ * waiting 10ms, setting PD pin low, and disabling power supplies.
  *
  * Return: 0 on success, negative error code on failure
  */
@@ -1628,82 +1625,79 @@ static int tas6754_power_off(struct snd_soc_component *component)
 
     dev_dbg(component->dev, "%s: Powering off TAS6754\n", __func__);
 
+    /* Check if already powered off */
+    if (!tas6754->powered) {
+        dev_dbg(component->dev, "TAS6754 already powered off\n");
+        return 0;
+    }
+
+    mutex_lock(&tas6754->mutex);
+
     /* If using external mute circuit, ensure it's muted before power-off */
-    if (tas6754->mute_gpio){
+    if (tas6754->mute_gpio) {
         gpiod_set_value_cansleep(tas6754->mute_gpio, 1);
-	} else {
-    /* If no external mute circuit, muting will be handled by HI-Z state */
-    dev_dbg(component->dev, "No mute GPIO, using HI-Z state for muting\n");
-	}
+        tas6754->muted = true;
+    } else {
+        /* If no external mute circuit, muting will be handled by HI-Z state */
+        dev_dbg(component->dev, "No mute GPIO, using HI-Z state for muting\n");
+    }
 
     /* Put all channels in HI-Z state to prevent pops/clicks.
-	   The HI-Z state effectively disconnects the outputs, which serves the same purpose as muting. */
-	ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_HIZ);
-	if (ret < 0) {
-		dev_err(component->dev, "Failed to set CH1/CH2 to HI-Z: %d\n", ret);
-		return ret;
-	}
-	ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_HIZ);
-	if (ret < 0) {
-		dev_err(component->dev, "Failed to set CH3/CH4 to HI-Z: %d\n", ret);
-		return ret;
-	}
+       The HI-Z state effectively disconnects the outputs, which serves the same purpose as muting. */
+    ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_HIZ);
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to set CH1/CH2 to HI-Z: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
+        return ret;
+    }
+    ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_HIZ);
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to set CH3/CH4 to HI-Z: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
+        return ret;
+    }
 
-    /* If STDY GPIO pin configured */
+    /* If STBY GPIO pin configured */
     if (tas6754->stby_gpio) {
         gpiod_set_value_cansleep(tas6754->stby_gpio, 0); /* Set low (active) */
     } else {
-        /* If no STDY GPIO pin configured, use register control for DEEP SLEEP mode */
+        /* If no STBY GPIO pin configured, use register control for DEEP SLEEP mode */
         ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_DEEP_SLEEP);
-		if (ret < 0) {
-			dev_err(component->dev, "Failed to set CH1/CH2 to DEEP SLEEP: %d\n", ret);
-			return ret;
-		}
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to set CH1/CH2 to DEEP SLEEP: %d\n", ret);
+            mutex_unlock(&tas6754->mutex);
+            return ret;
+        }
         ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_DEEP_SLEEP);
-		if (ret < 0) {
-			dev_err(component->dev, "Failed to set CH3/CH4 to DEEP SLEEP: %d\n", ret);
-			return ret;
-		}
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to set CH3/CH4 to DEEP SLEEP: %d\n", ret);
+            mutex_unlock(&tas6754->mutex);
+            return ret;
+        }
     }
 
     /* Wait at least 10ms before removing power supplies as per datasheet */
     msleep(10);
 
     /* Switch regmap to cache-only mode to preserve settings */
-	/* regcache operations after the register writes to ensure the writes take effect */
+    /* regcache operations after the register writes to ensure the writes take effect */
     regcache_cache_only(tas6754->regmap, true);
     regcache_mark_dirty(tas6754->regmap);
+    tas6754->cache_sync = true;
 
     /* For complete shutdown, assert PD pin */
-	if (tas6754->pd_gpio) {
-		gpiod_set_value_cansleep(tas6754->pd_gpio, 0); /* Set low (active) */
-	} else {
-		/* 
-		* No PD GPIO available. The device will remain in DEEP_SLEEP mode
-		* until power supplies are removed. This is not a complete shutdown
-		* but the lowest power state achievable without PD pin control.
-		*/
-		dev_dbg(component->dev, "No PD GPIO, device will remain in DEEP_SLEEP until power removed\n");
+    if (tas6754->pd_gpio) {
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 0); /* Set low (active) */
+    } else {
+        /* 
+        * No PD GPIO available. The device will remain in DEEP_SLEEP mode
+        * until power supplies are removed. This is not a complete shutdown
+        * but the lowest power state achievable without PD pin control.
+        */
+        dev_dbg(component->dev, "No PD GPIO, device will remain in DEEP_SLEEP until power removed\n");
     }
 
-	/** 
-	* @TODO:[DTS]To ensure regulators are disabled in the correct sequence (PVDD and VBAT first, then DVDD),
-				you should define them in the correct order in your device structure and device tree.
-				
-	Example device tree snippet:			
-	tas6754: audio-codec@70 {
-    compatible = "ti,tas6754";
-    reg = <0x70>;
-    
-    pvdd-supply = <&reg_audio_pvdd>;
-    vbat-supply = <&reg_audio_vbat>;
-    dvdd-supply = <&reg_audio_dvdd>;
-    
-    pd-gpio = <&gpio1 15 GPIO_ACTIVE_HIGH>;
-    stby-gpio = <&gpio1 16 GPIO_ACTIVE_HIGH>;
-    // other properties 
-	};*/
-
+	/* Disable regulators */
 	/** 
 	* @TODO:
 	* Recommended power-down sequence from the datasheet (PVDD and VBAT first, then DVDD).
@@ -1715,13 +1709,18 @@ static int tas6754_power_off(struct snd_soc_component *component)
     ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
     if (ret < 0) {
         dev_err(component->dev, "failed to disable supplies: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
     }
 
+    /* Update state variables */
+    tas6754->powered = false;
+    tas6754->playback_active = false;
+
+    mutex_unlock(&tas6754->mutex);
     dev_dbg(component->dev, "%s: TAS6754 powered off\n", __func__);
     return 0;
 }
-
 
 /**
  * TODO:
@@ -1909,7 +1908,6 @@ err_unlock:
     mutex_unlock(&tas6754->mutex);
     return ret;
 }
-
 
 static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_soc_bias_level level)
 {
