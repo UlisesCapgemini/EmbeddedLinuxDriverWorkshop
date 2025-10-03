@@ -33,20 +33,54 @@
 #define TAS6754_FAULT_CHECK_500MS 	 	(500)
 #define TAS6754_FAULT_CHECK_INTERVAL 	TAS6754_FAULT_CHECK_200MS
 
-/** 
-* @brief: When using the Linux regulator framework APIs, regulators are typically enabled in the order they appear
-* in the array and disabled in reverse order.
-* So, if your array has indices 0, 1, 2, the power-up sequence would access them in order 0→1→2,
-* and the power-down sequence would access them in order 2→1→0.
-*
-* This ensures that during power-up, VBAT is applied before DVDD, avoiding the documented fault condition from the datasheet.
-* 
-* Recommended power-down sequence from the datasheet (PVDD and VBAT first, then DVDD).
-* But, he power-down sequence isn't perfect according to the recommendation from the datasheer, but it's likely less critical than
-* the power-up sequence.
-* If the power-down sequence is absolutely critical, you might need to implement custom power management logic beyond just 
-* using the regulator framework's default behavior.
-*/
+/**
+ * @brief tas6754_supply_names - Power supply names for the TAS6754 amplifier
+ * 
+ * This array defines the names of the power supplies required by the TAS6754
+ * Class-D amplifier. These names are used to request regulators from the
+ * system's regulator framework and must match the supply names defined in
+ * the device tree.
+ * 
+ * The supplies are defined in the following order:
+ * 
+ * 1. "pvdd" - Class-D amplifier output FETs supply
+ *    - Powers the Class-D output stage power FETs
+ *    - Typically connected to the vehicle battery or main power supply
+ *    - Handles high current for driving speaker loads
+ *    - Operating voltage range: 4.5V to 18V
+ * 
+ * 2. "vbat" - Higher voltage analog circuits supply
+ *    - Powers the analog circuits requiring higher voltage
+ *    - Typically connected to the same source as PVDD
+ *    - Used for charge pumps and analog signal processing
+ *    - Operating voltage range: 4.5V to 18V
+ * 
+ * 3. "dvdd" - Digital power supply
+ *    - Powers the digital core and I/O interfaces
+ *    - Should be connected to a 3.3V regulated supply
+ *    - Used for DSP, control logic, and digital interfaces
+ *    - Operating voltage: 3.3V ±10%
+ * 
+ * Note 1: The order of these supplies is important for power sequencing.
+ * During power-up, they should be enabled in the order listed (PVDD, VBAT, DVDD).
+ * During power-down, they should be disabled in reverse order (DVDD, VBAT, PVDD).
+ * The Linux regulator framework will handle this automatically based on the
+ * order defined in this array.
+ * 
+ * 
+ * Note 2: For power suply sequence, when using the Linux regulator framework APIs, regulators are typically enabled in the order
+ * they appear in the array and disabled in reverse order.
+ * So, if your array has indices 0, 1, 2, the power-up sequence would access them in order 0→1→2,
+ * and the power-down sequence would access them in order 2→1→0.
+ *
+ * This ensures that during power-up, VBAT is applied before DVDD, avoiding the documented fault condition from the datasheet.
+ * 
+ * Recommended power-down sequence from the datasheet (PVDD and VBAT first, then DVDD).
+ * But, he power-down sequence isn't perfect according to the recommendation from the datasheer, but it's likely less critical than
+ * the power-up sequence.
+ * If the power-down sequence is absolutely critical, you might need to implement custom power management logic beyond just 
+ * using the regulator framework's default behavior.
+ */
 static const char * const tas6754_supply_names[] = {
     "pvdd",		/* Class-D amp output FETs supply. */
     "vbat", 	/* Supply used for higher voltage analog circuits. */
@@ -55,7 +89,82 @@ static const char * const tas6754_supply_names[] = {
 
 #define TAS6754_NUM_SUPPLIES ARRAY_SIZE(tas6754_supply_names)
 
+/* TODO: Channel state tracking */
+enum tas6754_channel_state {
+    TAS6754_CHANNEL_STATE_SHUTDOWN,
+    TAS6754_CHANNEL_STATE_DEEP_SLEEP,
+    TAS6754_CHANNEL_STATE_LOAD_DIAG,
+    TAS6754_CHANNEL_STATE_SLEEP,
+    TAS6754_CHANNEL_STATE_HIZ,
+    TAS6754_CHANNEL_STATE_PLAY,
+    TAS6754_CHANNEL_STATE_FAULT,
+    TAS6754_CHANNEL_STATE_AUTOREC
+};
 
+
+/**
+ * @brief tas6754_data - Private data structure for the TAS6754 Class-D amplifier driver
+ * 
+ * This structure holds all the state information and configuration data needed to
+ * control the TAS6754 Class-D audio amplifier. It manages hardware resources,
+ * tracks device state, stores audio configuration parameters, and maintains
+ * fault monitoring information.
+ * 
+ * The structure is organized into logical sections:
+ * 
+ * Core Driver Resources:
+ * - dev: Pointer to the associated device structure
+ * - regmap: Register map for I2C communication with the device
+ * - supplies: Power supply regulators for the device (PVDD, VBAT, DVDD)
+ * - fault_check_work: Delayed work for periodic fault monitoring
+ * - mutex: Mutex for thread safety in concurrent operations
+ * 
+ * GPIO Control:
+ * - pd_gpio: Power Down GPIO for controlling device power state
+ * - stby_gpio: Standby GPIO for controlling device standby mode
+ * - mute_gpio: Optional GPIO for external mute circuit control
+ * 
+ * State Tracking:
+ * - powered: Tracks whether the device is currently powered on
+ * - cache_sync: Indicates if register cache needs synchronizing
+ * - playback_active: Indicates if audio playback is currently active
+ * - muted: Tracks whether the device is currently muted
+ * 
+ * Fault Tracking:
+ * - last_oc_dc_fault: Last overcurrent/DC fault status
+ * - last_power_fault: Last power fault status
+ * - last_ot_fault: Last over-temperature fault status
+ * - last_cbc_fault_warn: Last current boost converter fault/warning
+ * - last_rtldg_ol_sl_fault: Last real-time load diagnostics/open load/short load fault
+ * 
+ * Audio Interface Configuration:
+ * - tdm_mode: Whether TDM mode is enabled
+ * - dsp_a_mode: Whether DSP_A mode is enabled (requires 1-bit offset)
+ * - short_fsync: Whether FSYNC pulse is shorter than 8 SCLK cycles
+ * - use_sdin2_for_ch34: Whether to use SDIN2 input for channels 3-4
+ * - ll_enabled: Whether low latency channels are enabled
+ * - support_rate_change: For implementing on-the-fly sample rate changes
+ * 
+ * Audio Parameters:
+ * - bit_depth: Current audio bit depth (16, 20, 24, or 32 bits)
+ * - sample_rate: Current sample rate (44.1kHz to 192kHz)
+ * - channels: Number of active audio channels
+ * - dai_fmt: Current digital audio interface format
+ * - channel_offset: Custom channel offset in bits
+ * - ll_offset: Low latency channel offset in bits
+ * - sdin2_gpio_num: GPIO number used for SDIN2 (1 or 2)
+ * - tdm_slots: Number of TDM slots (4, 8, or 16)
+ * - tdm_slot_width: TDM slot width in bits (16, 20, 24, or 32)
+ * - channel_map: Mapping of amplifier channels to TDM slots
+ * - channel_state: For tracking the current state of each channel
+ * - audio_swap: Audio channel swap configuration
+ * - ll_swap: Low latency channel swap configuration
+ * - detected_sclk_ratio: SCLK to sample rate ratio detected by the device
+ * 
+ * Volume and Audio Settings:
+ * - volume: Current volume settings for each channel
+ * - dc_load_diag_config: DC load diagnostics configuration
+ */
 struct tas6754_data {
     struct device *dev;
     struct regmap *regmap;
@@ -69,8 +178,8 @@ struct tas6754_data {
     struct gpio_desc *mute_gpio;       /* GPIO for external mute circuit (optional) */
     
     /* State tracking */
-    bool powered;                      /* TODO: [Desired] to implement Power State Tracking -> adding a state variable to track power state */
-	bool cache_sync;  				   /* TODO: [Optional] to implement whether regcache needs syncing */
+    bool powered;                      /* Power State Tracking */
+	bool cache_sync;  				   /* Whether regcache needs syncing */
     bool playback_active;              /* Whether audio playback is active */
     bool muted;                        /* Whether the device is currently muted */
     
@@ -82,31 +191,29 @@ struct tas6754_data {
     unsigned int last_rtldg_ol_sl_fault;
     
     /* Audio interface configuration */
-    bool tdm_mode;                     /* Whether in TDM mode */
-    bool dsp_a_mode;                   /* Whether in DSP_A mode (needs 1-bit offset) */
-    bool short_fsync;                  /* Whether FSYNC pulse is < 8 SCLK cycles */
-    bool use_sdin2_for_ch34;           /* Whether to use SDIN2 for channels 3-4 */
-    bool ll_enabled;                   /* Whether low latency channels are enabled */
-    bool support_rate_change;          /* TODO: [Desired] to implement support on-the-fly rate changes */
+    bool tdm_mode;                     	/* Whether in TDM mode */
+    bool dsp_a_mode;                   	/* Whether in DSP_A mode (needs 1-bit offset) */
+    bool short_fsync;                  	/* Whether FSYNC pulse is < 8 SCLK cycles */
+    bool use_sdin2_for_ch34;           	/* Whether to use SDIN2 for channels 3-4 */
+    bool ll_enabled;                   	/* Whether low latency channels are enabled */
+    bool support_rate_change;          	/* TODO: [Desired] to implement support on-the-fly rate changes */
     
     /* Audio parameters */
-    unsigned int bit_depth;            /* Current bit depth */
-    unsigned int sample_rate;          /* Current sample rate */
-    unsigned int channels;             /* Current channel count */
-    unsigned int dai_fmt;              /* Current DAI format */
-    unsigned int channel_offset;       /* Custom channel offset (in bits) */
-    unsigned int ll_offset;            /* Low latency channel offset (in bits) */
-    unsigned int sdin2_gpio_num;       /* GPIO number to use for SDIN2 (1 or 2) */
-    unsigned int tdm_slots;            /* Number of TDM slots (4, 8, or 16) */
-    unsigned int tdm_slot_width;       /* TDM slot width (16, 20, 24, or 32) */
-    unsigned int channel_map[4];       /* Mapping of channels to TDM slots */
-    unsigned int audio_swap;           /* Audio channel swap option */
-    unsigned int ll_swap;              /* Low latency channel swap option */
-    unsigned int detected_sclk_ratio;  /* SCLK ratio detected by the device */
-	//unsigned int detected_sclk_ratio; /* TODO: [Optional] SCLK ratio detected by the device. Useful for:*/
-															/*-Debugging
-															-Potentially adjusting settings based on the detected ratio
-															-Reporting the ratio through sysfs or debugfs*/
+    unsigned int bit_depth;            	/* Current bit depth */
+    unsigned int sample_rate;          	/* Current sample rate */
+    unsigned int channels;             	/* Current channel count */
+    unsigned int dai_fmt;              	/* Current DAI format */
+    unsigned int channel_offset;       	/* Custom channel offset (in bits) */
+    unsigned int ll_offset;            	/* Low latency channel offset (in bits) */
+    unsigned int sdin2_gpio_num;       	/* GPIO number to use for SDIN2 (1 or 2) */
+    unsigned int tdm_slots;            	/* Number of TDM slots (4, 8, or 16) */
+    unsigned int tdm_slot_width;       	/* TDM slot width (16, 20, 24, or 32) */
+    unsigned int channel_map[4];       	/* Mapping of channels to TDM slots */
+	unsigned int channel_state[4];     	/* TODO: [Desired] to implement current state tracking of each channel */
+    unsigned int audio_swap;           	/* Audio channel swap option */
+    unsigned int ll_swap;              	/* Low latency channel swap option */
+    unsigned int detected_sclk_ratio;  	/* SCLK ratio detected by the device */
+
     /* Volume and audio settings */
     unsigned int volume[4];            /* Current volume settings for each channel */
     unsigned int dc_load_diag_config;  /* DC load diagnostics configuration */
@@ -117,41 +224,21 @@ struct tas6754_data {
  * Register values: 0x30 = 0dB, 0x31 = -0.5dB, ..., 0xFE = -103dB, 0xFF = Mute
  */
 static DECLARE_TLV_DB_SCALE(dac_tlv, 0, -50, 1);
+
 /*
- * DAC digital volumes. From -103.5 to 24 dB in 0.5 dB steps. Note that
- * setting the gain below -100 dB (register value <0x7) is effectively a MUTE
- * as per device datasheet.
- */
-/*static DECLARE_TLV_DB_SCALE(dac_tlv, -10350, 50, 0);
-
-static const struct snd_kcontrol_new tas6754_snd_controls[] = {
-	SOC_SINGLE_TLV("Speaker Driver CH1 Playback Volume",
-		       TAS6754_CH1_VOL_CTRL, 0, 0xff, 0, dac_tlv),
-	SOC_SINGLE_TLV("Speaker Driver CH2 Playback Volume",
-		       TAS6754_CH2_VOL_CTRL, 0, 0xff, 0, dac_tlv),
-	SOC_SINGLE_TLV("Speaker Driver CH3 Playback Volume",
-		       TAS6754_CH3_VOL_CTRL, 0, 0xff, 0, dac_tlv),
-	SOC_SINGLE_TLV("Speaker Driver CH4 Playback Volume",
-		       TAS6754_CH4_VOL_CTRL, 0, 0xff, 0, dac_tlv),
-	SOC_SINGLE_STROBE("Auto Diagnostics Switch", TAS6754_DC_DIAG_CTRL1,
-			  TAS6754_LDGBYPASS_SHIFT, 1),
-};*/
-
-/**
  * TODO:
  * Ensure tas6754_dac_event function properly manages the power states and fault handling for the TAS6754
  * 		OK- default fault handling capabilities are implemented.
  * 		PENDING - Optionally add more fault types monitoring as required.
  * 		PENDING - Double check if power states management are correctly implemented or is missing.
  */
+
  /**
- * tas6754_dac_event - DAPM event handler for TAS6754 DAC widgets
- * @brief: Handles power management events for the TAS6754 DAC widgets.
- * 		   It manages the amplifier's power state transitions and fault monitoring system.
- * @w: The DAPM widget
- * @kcontrol: The mixer control that triggered the event
- * @event: The DAPM event type (e.g., SND_SOC_DAPM_POST_PMU or SND_SOC_DAPM_PRE_PMD)
- *
+ * @brief tas6754_dac_event - DAPM event handler for TAS6754 DAC widgets
+ * 
+ * This function handles power management events for the TAS6754 DAC widgets.
+ * It manages the amplifier's power state transitions and fault monitoring system.
+ * 
  * On power-up (SND_SOC_DAPM_POST_PMU):
  * - Waits 12ms for the codec to stabilize after shutdown-to-active transition
  * - Resets all fault status tracking variables
@@ -166,8 +253,12 @@ static const struct snd_kcontrol_new tas6754_snd_controls[] = {
  * - Over-temperature conditions
  * - Current boost converter faults/warnings
  * - Real-time load diagnostics, open load, and short load faults
+ * 
+ * @param w: The DAPM widget
+ * @param kcontrol: The mixer control that triggered the event
+ * @param event: The DAPM event type (e.g., SND_SOC_DAPM_POST_PMU or SND_SOC_DAPM_PRE_PMD)
  *
- * @return: Return 0 on success, negative error code on failure
+ * @return Return 0 on success, negative error code on failure
  */
 static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
 			     struct snd_kcontrol *kcontrol, int event)
@@ -218,7 +309,7 @@ static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
 }
 
 /**
- * TAS6754 Channel Mapping Configuration Options
+ * @brief tas6754_ch_map_config_text[] - TAS6754 Channel Mapping Configuration Options
  *
  * This array defines the text labels for the 24 predefined channel mapping configurations
  * available in the TAS6754 amplifier. Each configuration represents a specific routing
@@ -271,57 +362,60 @@ static const struct soc_enum tas6754_ch_map_config_enum =
     SOC_ENUM_SINGLE(TAS6754_SDIN_CH_SWAP, 0, 24, tas6754_ch_map_config_text);
 
 /**
- * tas6754_dapm_widgets[]
- * @brief: This array defines the audio signal path through the TAS6754 Class-D amplifier using the
- * ALSA DAPM (Dynamic Audio Power Management) framework. The widgets represent the
- * functional blocks in the audio path from digital input to analog output, with per-channel
- * processing capabilities.
+ * @brief tas6754_dapm_widgets[] - DAPM widgets for the TAS6754 amplifier
+ * 
+ * This array defines the ALSA DAPM (Dynamic Audio Power Management) widgetsfor the TAS6754 Class-D audio amplifier.
+ * These widgets represent the audio processing blocks and the audio signal path from digital input to analog output,
+ * with per-channel processing capabilities.
+ * 
+ * The widgets types and functions are organized in the order of signal flow:
  *
- * Widget Types and Functions:
- *
- * 1. AIF_IN ("AIF IN"):
+ * 1. AIF_IN ("AIF IN"): Receives digital audio data from the SoC
  *    - Represents the digital audio input interface
  *    - Receives I2S or TDM format audio data from the system
  *    - Supports 2-4 channels via I2S or 4-16 channels via TDM
  *    - Handles sample rates from 44.1kHz to 192kHz
  *
- * 2. MUX ("CHx Map"):
+ * 2. MUX ("CHx Map"): Routes TDM slots to specific amplifier channels
  *    - Implements channel mapping functionality for each output channel
  *    - Allows selection of input source (Slot 1-4 or LL Slot 5-8) for each channel
  *    - Enables flexible routing between input slots and output channels
  *    - Connected to the tas6754_chx_mux controls for user configuration
  *
- * 3. DSP ("DSP"):
+ * 3. DSP ("DSP"): Optional digital signal processing block
  *    - Represents the digital signal processing block
  *    - Handles audio processing for all channels
  *    - Implements the Dual Audio DSP Subsystem functionality
  *    - Currently implemented without an event handler (power managed by DAC widgets)
  *    - TODO note discusses potential for dedicated event handler implementation
  *
- * 4. PGA ("CHx Volume"):
+ * 4. PGA ("CHx Volume"): Per-channel digital volume control
  *    - Programmable Gain Amplifier widgets for volume control
  *    - Provides independent digital volume control for each channel
  *    - Maps to the digital volume control registers (0x40-0x43)
  *    - Range from 0dB to -103dB in 0.5dB steps
  *
- * 5. DAC_E ("CHx DAC"):
+ * 5. DAC_E ("CHx DAC"): Digital-to-PWM converters with power event handling
  *    - Digital-to-PWM converter widgets with event handlers
  *    - Converts digital audio to PWM signals for Class-D amplification
  *    - Uses tas6754_dac_event handler for power management
  *    - Handles POST_PMU (power-up) and PRE_PMD (power-down) events
  *    - Manages fault monitoring and recovery
  *
- * 6. OUT_DRV ("CHx DRV"):
+ * 6. OUT_DRV ("CHx DRV"): Class-D output stages
  *    - Output driver stage widgets
  *    - Represents the gate drivers and power FET stages
  *    - Delivers high-efficiency Class-D amplification
  *    - One driver per channel for independent operation
  *
- * 7. OUTPUT ("OUTx"):
+ * 7. OUTPUT ("OUTx"): Connection points to external speakers
  *    - Physical output widgets
  *    - Represents the bridge-tied load (BTL) outputs to speakers
  *    - Four independent output channels
  *    - Capable of delivering up to 30W per channel into 4Ω loads
+ * 
+ * The DAC widgets include event handlers (tas6754_dac_event) that manage power
+ * sequencing and fault monitoring during power-up and power-down transitions.
  *
  * Power Management:
  * - The widgets use SND_SOC_NOPM (No Power Management) for register control
@@ -330,10 +424,13 @@ static const struct soc_enum tas6754_ch_map_config_enum =
  * - The handler is called during power-up (POST_PMU) and power-down (PRE_PMD)
  *
  * Note on DSP Event Handler:
- * The TODO comment discusses whether a separate tas6754_dsp_event handler should be
+ * TODO comment discusses whether a separate tas6754_dsp_event handler should be
  * implemented for the DSP widget. Currently, power management for the entire device
  * is handled by the DAC event handlers. A separate DSP handler could be added for
  * more granular control if needed in the future.
+ * 
+ * Therefore, The DSP widget currently doesn't have an event handler, but could be
+ * enhanced with one for specific power management or configuration tasks.
  */
 static const struct snd_soc_dapm_widget tas6754_dapm_widgets[] = {
     /* Digital Input */
@@ -348,8 +445,8 @@ static const struct snd_soc_dapm_widget tas6754_dapm_widgets[] = {
 	/* DSP Processing (without an event handler)*/
 	SND_SOC_DAPM_DSP("DSP", SND_SOC_NOPM, 0, 0, NULL),
 
-    /**
-     * @TODO:
+    /*
+     * TODO:
 	 * tas6754_dsp_event - Handler to manage power sequencing
 	 * Check if a DSP event handler tas6754_dsp_event is needed for specific power management or configuration tasks 
 	 * or we can reuse the existing handler tas6754_dac_event? 
@@ -390,7 +487,7 @@ static const struct snd_soc_dapm_widget tas6754_dapm_widgets[] = {
 };
 
 /**
- * TAS6754 Channel Mapping Text Options
+ * @brief tas6754_ch_map_text[] - TAS6754 Channel Mapping Text Options
  *
  * This array defines the text labels for the input slot options available in the
  * channel mapping controls of the TAS6754 Class-D amplifier. These labels represent the
@@ -450,7 +547,7 @@ static const struct snd_kcontrol_new tas6754_ch4_mux =
     SOC_DAPM_ENUM("CH4 Source", tas6754_ch4_map_enum);
 
 /**
- * TAS6754 DAPM Audio Map
+ * @brief tas6754_audio_map[] - TAS6754 DAPM Audio Map
  *
  * This array defines the connections between the DAPM widgets in the TAS6754 Class-D amplifier's
  * audio signal path. Each entry represents a connection from a source widget to a sink
@@ -571,16 +668,22 @@ static const struct snd_soc_dapm_route tas6754_audio_map[] = {
 };
 
 /**
- * tas6754_hw_params - Configure the TAS6754 for the current audio stream
- * @substream: The audio substream
- * @params: Stream parameters
- * @dai: The DAI interface
+ * @brief tas6754_hw_params - Configure hardware parameters for audio stream
+ * 
+ * This function configures the TAS6754 amplifier for the specified audio stream
+ * parameters including sample rate, channel count, and bit depth. It handles
+ * configuration of TDM mode, data length settings, SDIN source routing, and
+ * channel offsets. The function also verifies that the device has correctly
+ * detected the configured sample rate.
+ * 
+ * If the device is not powered, the parameters are stored for later application
+ * when the device is powered on.
+ * 
+ * @param substream: The audio substream
+ * @param params: Stream parameters (rate, channels, format)
+ * @param dai: The DAI interface
  *
- * Configures the device for the specified audio parameters including
- * sample rate, bit depth, channel count, and interface format. Handles
- * TDM mode configuration, channel offsets, and SDIN routing.
- *
- * Return: 0 on success, negative error code on failure
+ * @return Returns 0 on success, or a negative error code.
  */
 static int tas6754_hw_params(struct snd_pcm_substream *substream,
                             struct snd_pcm_hw_params *params,
@@ -788,25 +891,22 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
 }
 
 /**
- * tas6754_verify_sample_rate - Verify the TAS6754 has detected the correct sample rate
- * @component: The ALSA SoC component
- * @rate: Expected sample rate in Hz
- *
- * This function verifies that the TAS6754 has correctly detected the
- * configured sample rate by reading the FS_MON register and comparing
- * the detected rate code with the expected code for the given rate.
+ * @brief tas6754_verify_sample_rate - Verify the detected sample rate
  * 
- * The function also reads and validates the SCLK ratio (SCLK frequency / sample rate)
- * from the FS_MON and SCLK_MON registers, ensuring it's within the supported
- * range of 32Fs to 512Fs. The detected SCLK ratio is stored in the driver's
- * private data for diagnostic purposes.
- *
+ * This function verifies that the TAS6754 has correctly detected the configured
+ * sample rate by reading the FS_MON register and comparing the detected rate code
+ * with the expected code for the given rate. It also reads and validates the SCLK
+ * ratio (SCLK frequency / sample rate) from the FS_MON and SCLK_MON registers.
+ * 
  * Special handling is provided for 44.1kHz family rates (44.1kHz, 88.2kHz, 176.4kHz)
  * since the datasheet doesn't explicitly list their detection codes. For these rates,
- * the function accepts whatever code the device reports to maintain compatibility.
+ * the function accepts whatever code the device reports.
+ * 
+ * @param component: The ALSA SoC component
+ * @param rate: Expected sample rate in Hz
  *
- * Return: 0 on success (even if there's a sample rate mismatch but the device
- * is still operational), negative error code on failure
+ * @return Returns 0 on success (even if there's a sample rate mismatch but the device
+ * is still operational), or a negative error code.
  */
 static int tas6754_verify_sample_rate(struct snd_soc_component *component, unsigned int rate)
 {
@@ -896,20 +996,20 @@ static int tas6754_verify_sample_rate(struct snd_soc_component *component, unsig
 }
 
 /**
- * tas6754_set_dai_fmt - Set the DAI format for the TAS6754
- * @dai: The DAI interface
- * @fmt: Format to set
+ * @brief tas6754_set_dai_fmt - Set the DAI format for the TAS6754
+ * 
+ * This function configures the digital audio interface format for the TAS6754 amplifier.
+ * It handles various audio formats (I2S, Left-Justified, Right-Justified, DSP/TDM),
+ * clock polarity settings, and FSYNC pulse width configuration. The function also
+ * enables last sample hold for better audio quality during clock errors.
+ * 
+ * If the device is not powered, the format is stored for later application when
+ * the device is powered on.
+ * 
+ * @param dai: The DAI interface
+ * @param fmt: Format to set, including data format and clock polarity
  *
- * Configures the digital audio interface format including:
- * - Data format (I2S, Left-Justified, Right-Justified, DSP/TDM)
- * - Clock polarity settings
- * - FSYNC pulse width for DSP/TDM modes
- * - Last sample hold behavior
- *
- * The function stores format settings in the driver's private data
- * and configures the device registers accordingly.
- *
- * Return: 0 on success, negative error code on failure
+ * @return Returns 0 on success, or a negative error code.
  */
 static int tas6754_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
@@ -1069,18 +1169,20 @@ static int tas6754_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 }
 
 /**
- * tas6754_set_dai_tdm_slot
- * @brief: Wrapper function that matches the ALSA SoC signature and calls tas6754_configure_tdm
- * The ALSA SoC set_tdm_slot callback has a specific signature:
- * int (*set_tdm_slot) (struct snd_soc_dai *dai, unsigned int tx_mask, 
- * 							unsigned int rx_mask, int slots, int slot_width);
- * @dai: 
- * @tx_mask:
- * @rx_mask:
- * @slots:
- * @slot_width:
+ * @brief tas6754_set_dai_tdm_slot - Configure TDM slot settings
  * 
- * @return:
+ * This function configures the TDM slot settings for the TAS6754 audio amplifier.
+ * It processes the tx_mask to determine which slots are active and maps them to
+ * the amplifier's channels. The function then calls tas6754_configure_tdm to apply
+ * the configuration to the device.
+ * 
+ * @param dai: The DAI interface
+ * @param tx_mask: Bitmask of active transmit slots
+ * @param rx_mask: Bitmask of active receive slots (not used)
+ * @param slots: Total number of TDM slots
+ * @param slot_width: Width of each TDM slot in bits
+ *
+ * @return Returns 0 on success, or a negative error code.
  */
 static int tas6754_set_dai_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mask,
                             unsigned int rx_mask, int slots, int slot_width)
@@ -1104,19 +1206,19 @@ static int tas6754_set_dai_tdm_slot(struct snd_soc_dai *dai, unsigned int tx_mas
 }
 
 /**
- * tas6754_configure_tdm
- * @brief: Configures the TAS6754 for TDM operation with the specified
- * parameters. It sets up the proper offsets for each channel group and
- * configures the channel mapping. 
+ * @brief tas6754_configure_tdm - Configure TDM mode
  * 
- * @component: The component instance
- * @slot_width: TDM slot width (16, 20, 24, or 32 bits)
- * @slots: Number of TDM slots (4, 8, or 16)
- * @channel_map: Array mapping physical channels to TDM slots
- * @audio_swap: Audio channel swap option (0-31)
- * @ll_swap: Low latency channel swap option (0-7)
+ * This function configures the TAS6754 Class-D amplifier for TDM operation with the specified parameters.
+ * It sets up the proper offsets for each channel group and configures the channel mapping. 
+ * 
+ * @param component: The component instance
+ * @param slot_width: TDM slot width (16, 20, 24, or 32 bits)
+ * @param slots: Number of TDM slots (4, 8, or 16)
+ * @param channel_map: Array mapping physical channels to TDM slots
+ * @param audio_swap: Audio channel swap option (0-31)
+ * @param ll_swap: Low latency channel swap option (0-7)
  *
- * @return: Returns 0 on success, or a negative error code.
+ * @return Returns 0 on success, or a negative error code.
  */
 static int tas6754_configure_tdm(struct snd_soc_component *component,
                                int slot_width, int slots,
@@ -1265,15 +1367,14 @@ static int tas6754_configure_tdm(struct snd_soc_component *component,
 }
 
 /**
- * tas6754_configure_low_latency
- * @brief: Enables or disables the low latency channels in TDM mode
- * and configures their offset.
+ * @brief tas6754_configure_low_latency - Enable or disable low latency channels
  * 
- * @component: The component instance
- * @enable: Whether to enable low latency channels
- * @offset: Offset in SCLKs for low latency channels (0-511)
+ * This function enables or disables the low latency channels in TDM mode and configures their offset.
  * 
- * @return: Returns 0 on success, or a negative error code.
+ * @param component: The component instance
+ * @param enable: Whether to enable low latency channels
+ * @param offset: Offset in SCLKs for low latency channels (0-511)
+ * @return Returns 0 on success, or a negative error code.
  */
 static int tas6754_configure_low_latency(struct snd_soc_component *component,
                                        bool enable, unsigned int offset)
@@ -1323,15 +1424,14 @@ static int tas6754_configure_low_latency(struct snd_soc_component *component,
 }
 
 /**
- * tas6754_configure_sdin2
- * @brief: Configures one of the GPIO pins as SDIN2 for receiving
- * audio data for channels 3 and 4 in I2S mode or as an alternative
- * input in TDM mode.
+ * @brief tas6754_configure_sdin2 - Configure GPIO pins as SDIN2
  * 
- * @component: The component instance
- * @gpio_num: GPIO number to use (1 or 2) 
- *
- * @return: Returns 0 on success, or a negative error code.
+ * This function configures one of the GPIO pins as SDIN2 for receiving audio data for channels 3 and 4 in I2S mode or
+ * as an alternative input in TDM mode.
+ * 
+ * @param component: The component instance
+ * @param gpio_num: GPIO number to use (1 or 2) 
+ * @return Returns 0 on success, or a negative error code.
  */
 static int tas6754_configure_sdin2(struct snd_soc_component *component, int gpio_num)
 {
@@ -1553,7 +1653,7 @@ static int tas6754_ll_swap_put(struct snd_kcontrol *kcontrol,
 }
 
 /**
- * TAS6754 ALSA Controls
+ * @brief tas6754_snd_controls[]: TAS6754-Q1 Class-D ALSA Controls
  *
  * This array defines the mixer controls exposed to user applications through the ALSA
  * framework. These controls allow configuration of various aspects of the TAS6754
@@ -1654,19 +1754,19 @@ static const struct snd_kcontrol_new tas6754_snd_controls[] = {
 
 
 /**
- * tas6754_mute - Mute or unmute all channels
- * @brief: Mutes or unmutes all channels of the TAS6754 amplifier.
- * Unlike the TAS6424, the TAS6754 doesn't have a dedicated MUTE pin,
- * so we control muting through the channel state registers.
+ * @brief tas6754_mute - Mute or unmute all channels
+ * 
+ * This function mutes or unmutes all channels of the TAS6754 amplifier.
+ * Unlike the TAS6424, the TAS6754 doesn't have a dedicated MUTE pin, so we control muting through the channel state registers.
  * 
  * When muting, we keep the channels in PLAY state but set the mute bit.
  * When unmuting, we keep the channels in PLAY state and clear the mute bit.
  * 
- * @dai: DAI instance
- * @mute: Mute state (1 = mute, 0 = unmute)
- * @direction: Stream direction (not used)
+ * @param dai: DAI instance
+ * @param mute: Mute state (1 = mute, 0 = unmute)
+ * @param direction: Stream direction (not used)
  *
- * @return: Return 0 on success, negative error code on failure
+ * @return Return 0 on success, negative error code on failure
  */
 static int tas6754_mute(struct snd_soc_dai *dai, int mute, int direction)
 {
@@ -1696,15 +1796,15 @@ static int tas6754_mute(struct snd_soc_dai *dai, int mute, int direction)
 }
 
 /**
- * tas6754_power_off - Power off the TAS6754 audio amplifier
- * @component: The ALSA SoC component representing the TAS6754
- *
+ * @brief tas6754_power_off - Power off the TAS6754 audio amplifier
+ * 
  * This function implements the power-off sequence for the TAS6754 Class-D
  * amplifier according to the datasheet specifications. The sequence includes:
  * muting outputs, putting channels in HI-Z state, setting STBY pin low,
  * waiting 10ms, setting PD pin low, and disabling power supplies.
- *
- * Return: 0 on success, negative error code on failure
+ * 
+ * @param component: The ALSA SoC component representing the TAS6754 *
+ * @return Return 0 on success, negative error code on failure
  */
 static int tas6754_power_off(struct snd_soc_component *component)
 {
@@ -1786,14 +1886,15 @@ static int tas6754_power_off(struct snd_soc_component *component)
     }
 
 	/* Disable regulators */
-	/** 
-	* @TODO:
+	/*
+	* TODO
 	* Recommended power-down sequence from the datasheet (PVDD and VBAT first, then DVDD).
 	* But, the power-down sequence isn't perfect according to the recommendation from the datasheet, but it's likely less critical than
 	* the power-up sequence.
 	* If the power-down sequence is absolutely critical, you might need to implement custom power management logic beyond just 
 	* using the regulator framework's default behavior.
-	* The Linux regulator framework will disable them in reverse order of enabling as per tas6754_supply_names[] definition */
+	* The Linux regulator framework will disable them in reverse order of enabling as per tas6754_supply_names[] definition
+	*/
     ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
     if (ret < 0) {
         dev_err(component->dev, "failed to disable supplies: %d\n", ret);
@@ -1810,9 +1911,9 @@ static int tas6754_power_off(struct snd_soc_component *component)
     return 0;
 }
 
-/**
- * TODO:
- * @ref: TRM[4.3.1.1.1.1 Quick-Start Sequence, p-24]
+/*
+ * TODO
+ * TRM[4.3.1.1.1.1 Quick-Start Sequence, p-24]
  * In some cases a quick startup time from shutdown to audio playback is needed. For the quickest startup the DC 
  * Load Diagnostics can be aborted. This allows the device to go into PLAY state without having to wait for DC 
  * Load Diagnostics to finish.
@@ -1820,17 +1921,30 @@ static int tas6754_power_off(struct snd_soc_component *component)
  */
 
 /**
- * tas6754_power_on - Power on the TAS6754 audio amplifier
- * @brief: This function implements the power-on sequence for the TAS6754 Class-D
+ * @brief tas6754_power_on - Power on the TAS6754 audio amplifier
+ * 
+ * This function implements the power-on sequence for the TAS6754 Class-D
  * amplifier according to the datasheet specifications. The sequence includes:
- * keeping PD and STBY pins low initially, enabling power supplies, releasing
- * PD pin, waiting 4ms, enabling register access, checking for faults,
- * releasing STBY pin, setting initial channel states, and waiting for
- * device initialization and auto-diagnostics to complete.
- 
- * @component: The ALSA SoC component representing the TAS6754
+ * 1. Checking if the device is already powered on
+ * 2. Keeping PD and STBY pins low initially
+ * 3. Checking DC load diagnostics configuration
+ * 4. Enabling power supplies (PVDD, VBAT, DVDD)
+ * 5. Waiting for supplies to stabilize
+ * 6. Releasing PD pin to power up digital circuitry
+ * 7. Waiting 4ms as specified in the datasheet
+ * 8. Enabling register access and synchronizing register cache if needed
+ * 9. Checking and clearing any power-on-reset (POR) faults
+ * 10. Releasing STBY pin to power up analog circuitry
+ * 11. Setting initial channel states based on mute configuration
+ * 12. Waiting for device initialization
+ * 13. Waiting for auto-diagnostics to complete if enabled
+ * 14. Restoring volume settings from stored values
+ * 
+ * The function uses mutex protection to ensure thread safety and includes
+ * comprehensive error handling with proper cleanup in case of failures.
  *
- * @return: Return 0 on success, negative error code on failure
+ * @param component: The ALSA SoC component representing the TAS6754
+ * @return 0 on success, negative error code on failure
  */
 static int tas6754_power_on(struct snd_soc_component *component)
 {
@@ -2017,6 +2131,36 @@ static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_
 	return 0;
 }
 
+/**
+ * @brief soc_codec_dev_tas6754 - ALSA SoC Component Driver for TAS6754
+ * 
+ * This structure defines the ALSA SoC component driver for the TAS6754 Class-D
+ * amplifier. It integrates the amplifier into the ALSA SoC framework by specifying
+ * its controls, widgets, audio routing, and power management capabilities.
+ * 
+ * Key components:
+ * 
+ * - set_bias_level: Implements power management through tas6754_set_bias_level
+ *   which handles transitions between different power states (OFF, STANDBY, PREPARE, ON)
+ * 
+ * - controls: Points to tas6754_snd_controls array which defines mixer controls
+ *   for volume, mute, TDM configuration, and other user-adjustable parameters
+ * 
+ * - dapm_widgets: Points to tas6754_dapm_widgets array which defines the audio
+ *   processing blocks in the signal path (inputs, DSP, volume controls, DACs, outputs)
+ * 
+ * - dapm_routes: Points to tas6754_audio_map array which defines the connections
+ *   between audio processing blocks, establishing the signal flow
+ * 
+ * - use_pmdown_time: Enables the use of power management down time, allowing
+ *   for pop-free shutdown by delaying power down after stream closure
+ * 
+ * - endianness: Specifies the device's register endianness (1 = big endian)
+ * 
+ * This structure enables the TAS6754 to be registered with the ALSA SoC framework
+ * and provides all the necessary callbacks and configurations for proper operation
+ * within a Linux audio system.
+ */
 static struct snd_soc_component_driver soc_codec_dev_tas6754 = {
 	.set_bias_level		= tas6754_set_bias_level,//ok
 	.controls			= tas6754_snd_controls,//ok
@@ -2029,6 +2173,40 @@ static struct snd_soc_component_driver soc_codec_dev_tas6754 = {
 	.endianness		= 1,
 };
 
+/**
+ * @brief tas6754_speaker_dai_ops - DAI operations for TAS6754
+ * 
+ * This structure defines the Digital Audio Interface operations for the TAS6754
+ * Class-D amplifier. It provides the necessary callbacks to configure and control
+ * the digital audio interface aspects of the amplifier.
+ * 
+ * Implemented operations:
+ * 
+ * - hw_params: Configures hardware parameters through tas6754_hw_params
+ *   - Sets up sample rate, bit depth, channel count
+ *   - Configures TDM mode if needed
+ *   - Sets up channel offsets and SDIN routing
+ *   - Verifies proper sample rate detection
+ * 
+ * - set_fmt: Sets audio interface format through tas6754_set_dai_fmt
+ *   - Configures I2S, Left-Justified, Right-Justified, or DSP/TDM formats
+ *   - Sets clock polarity (normal or inverted)
+ *   - Configures FSYNC pulse width for DSP/TDM modes
+ * 
+ * - set_tdm_slot: Configures TDM slot assignments through tas6754_set_dai_tdm_slot
+ *   - Maps TDM slots to amplifier channels
+ *   - Handles slot width and count configuration
+ * 
+ * - mute_stream: Controls digital muting through tas6754_mute
+ *   - Implements soft muting to prevent pops and clicks
+ * 
+ * - no_capture_mute: Set to 1 to indicate that capture mute is not supported
+ *   (TAS6754 is a playback-only device)
+ * 
+ * These operations allow the Linux audio subsystem to properly configure and
+ * control the TAS6754's digital audio interface according to the requirements
+ * of the audio stream being played.
+ */
 static const struct snd_soc_dai_ops tas6754_speaker_dai_ops = {
 	.hw_params	= tas6754_hw_params,//ok
 	.set_fmt	= tas6754_set_dai_fmt,//ok
@@ -2037,6 +2215,40 @@ static const struct snd_soc_dai_ops tas6754_speaker_dai_ops = {
 	.no_capture_mute = 1,
 };
 
+/**
+ * @brief tas6754_dai - DAI (Digital Audio Interface) driver definition for TAS6754
+ * 
+ * This array defines the Digital Audio Interface driver for the TAS6754 Class-D
+ * amplifier. It specifies the capabilities and operations of the amplifier's
+ * digital audio interface, including supported channels, sample rates, and
+ * audio formats.
+ * 
+ * The TAS6754 is configured with a single DAI named "tas6754-amplifier" that
+ * supports playback operation with the following capabilities:
+ * 
+ * - Channels: Supports 1 to 4 independent audio channels
+ *   - Allows mono, stereo, or quad-channel configurations
+ *   - Each channel can be independently configured and controlled
+ * 
+ * - Sample Rates: Defined by TAS6754_RATES macro
+ *   - Typically includes 44.1kHz, 48kHz, 88.2kHz, 96kHz, 176.4kHz, and 192kHz
+ *   - Supports both standard and high-resolution audio sample rates
+ * 
+ * - Audio Formats: Defined by TAS6754_FORMATS macro
+ *   - Typically includes 16, 20, 24, and 32-bit PCM formats
+ *   - Supports both standard and high-resolution bit depths
+ * 
+ * The DAI operations are defined in tas6754_speaker_dai_ops, which implements
+ * the necessary callbacks for configuring the audio interface, including:
+ * - hw_params: Configure hardware parameters (sample rate, bit depth, channels)
+ * - set_fmt: Set audio interface format (I2S, TDM, clock polarity)
+ * - set_tdm_slot: Configure TDM slot assignments
+ * - mute_stream: Control digital muting
+ * - no_capture: This is a playback-only device
+ * 
+ * This DAI definition enables the TAS6754 to integrate with the ALSA SoC framework
+ * and allows it to be used as an audio endpoint in Linux-based audio systems.
+ */
 static struct snd_soc_dai_driver tas6754_dai[] = {
 	{
 		.name = "tas6754-amplifier",
@@ -2051,6 +2263,47 @@ static struct snd_soc_dai_driver tas6754_dai[] = {
 	},
 };
 
+/**
+ * @brief tas6754_fault_check_work - Periodic fault detection and handling for TAS6754
+ * 
+ * This function implements the periodic fault checking mechanism for the TAS6754
+ * Class-D amplifier. It runs as a delayed work item and checks various fault
+ * registers to detect and report amplifier fault conditions. The function
+ * compares current fault states with previously stored states to report only
+ * new fault conditions.
+ * 
+ * The function checks the following fault categories:
+ * 
+ * 1. Overcurrent (OC) and DC Faults:
+ *    - Reads the OC_DC_FAULT_LATCHED register
+ *    - Detects overcurrent conditions on each channel
+ *    - Detects DC fault conditions on each channel
+ * 
+ * 2. Power Supply Faults:
+ *    - Reads the POWER_FAULT_LATCHED register
+ *    - Detects DVDD power-on reset events
+ *    - Detects under/over voltage conditions on DVDD, PVDD, and VBAT
+ * 
+ * 3. Over-Temperature (OT) Faults:
+ *    - Reads the OT_FAULT register
+ *    - Detects global and per-channel overtemperature conditions
+ *    - Detects charge pump faults
+ * 
+ * 4. Current Boost Converter (CBC) Faults and Warnings:
+ *    - Reads the CBC_FAULT_WARN_LATCHED register
+ *    - Detects load current warnings and faults for each channel
+ * 
+ * 5. Real-Time Load Diagnostics (RTLDG) Faults:
+ *    - Reads the RTLDG_OL_SL_FAULT_LATCHED register
+ *    - Detects open load and shorted load conditions on each channel
+ * 
+ * After checking all fault registers, the function attempts to clear any
+ * detected faults by toggling the CLEAR FAULT control bit in the RESET
+ * register. Finally, it reschedules itself to run again after the specified
+ * interval (TAS6754_FAULT_CHECK_INTERVAL).
+ * 
+ * @param work: Pointer to the work structure embedded in tas6754_data
+ */
 static void tas6754_fault_check_work(struct work_struct *work)
 {
 	struct tas6754_data *tas6754 = container_of(work, struct tas6754_data, fault_check_work.work);
@@ -2524,9 +2777,9 @@ MODULE_DEVICE_TABLE(of, tas6754_of_ids);
 #endif
 
 /**
- * tas6754_i2c_probe - Probe and initialize the TAS6754 audio amplifier
- *
- * @brief: Initializes the TAS6754 Class-D audio amplifier when the device
+ * @brief tas6754_i2c_probe - Probe and initialize the TAS6754 audio amplifier
+ * 
+ * This function initializes the TAS6754 Class-D audio amplifier when the device
  * is detected on the I2C bus. It performs the following operations:
  *
  * 1. Allocates and initializes the driver's private data structure
@@ -2548,7 +2801,7 @@ MODULE_DEVICE_TABLE(of, tas6754_of_ids);
  * The function follows the power-up sequence specified in the TAS6754 datasheet
  * to ensure proper device initialization. It includes appropriate error handling
  * and cleanup in case any step fails.
- * @client: I2C client for the device
+ * @param client: I2C client for the device
  * 
  * @return: Return 0 on success, negative error code on failure
  */
@@ -2575,7 +2828,8 @@ static int tas6754_i2c_probe(struct i2c_client *client)
     tas6754->powered = false;
     tas6754->cache_sync = false;
     tas6754->playback_active = false;
-    tas6754->muted = true;  /* Start muted for safety */
+    tas6754->muted = true;	/* Start muted for safety */
+	for (i = 0; i < 4; i++) tas6754->channel_state[i] = TAS6754_CHANNEL_STATE_SHUTDOWN;
     
     /* Initialize volume settings to default values */
     for (i = 0; i < 4; i++)
