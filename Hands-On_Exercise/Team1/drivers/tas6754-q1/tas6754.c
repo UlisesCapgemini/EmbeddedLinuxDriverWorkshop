@@ -25,6 +25,10 @@
 
 #include "tas6754.h"
 
+/** @defgroup driver_internal Internal Driver Functions
+ *  @{
+ */
+
 /* Define how often to check (and clear) the fault status register (in ms) */
 #define TAS6754_FAULT_CHECK_50MS 	 	(50)
 #define TAS6754_FAULT_CHECK_100MS 	 	(100)
@@ -2111,6 +2115,39 @@ err_unlock:
     return ret;
 }
 
+/**
+ * @brief tas6754_set_bias_level - Set power management bias level for TAS6754
+ * 
+ * This function implements the ALSA SoC bias level control for the TAS6754 amplifier.
+ * It manages the power state transitions of the device according to the ALSA SoC
+ * power management framework. The function is called by the ALSA SoC core when
+ * the system needs to change the power state of the audio component.
+ * 
+ * The function handles four bias levels:
+ * 
+ * - SND_SOC_BIAS_ON: Full power mode, audio playback active
+ *   - No specific action needed as the device is already powered
+ * 
+ * - SND_SOC_BIAS_PREPARE: Preparing for audio playback
+ *   - No specific action needed, device remains powered
+ * 
+ * - SND_SOC_BIAS_STANDBY: Low-power standby mode
+ *   - If transitioning from OFF, calls tas6754_power_on() to power up the device
+ *   - This ensures the device is ready for quick activation when needed
+ * 
+ * - SND_SOC_BIAS_OFF: Powered off
+ *   - Calls tas6754_power_off() to completely power down the device
+ *   - Saves power when audio is not in use
+ * 
+ * The function integrates with the ALSA SoC power management system to ensure
+ * proper sequencing of power state changes and to minimize power consumption
+ * while maintaining good audio performance and quick startup times.
+ * 
+ * @param component: The ALSA SoC component representing the TAS6754
+ * @param level: The requested bias level to transition to
+ *
+ * @return Returns 0 on success.
+ */
 static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_soc_bias_level level)
 {
 	dev_dbg(component->dev, "%s() level=%d\n", __func__, level);
@@ -3034,22 +3071,56 @@ disable_regs:
     return ret;
 }
 
+/**
+ * @brief tas6754_i2c_remove - Remove TAS6754 I2C device
+ * 
+ * This function is called when the TAS6754 I2C device is being removed from the system.
+ * It performs a clean shutdown of the amplifier and releases all resources that were
+ * allocated during probe.
+ * 
+ * The function follows these steps:
+ * 1. Cancels any pending fault check work
+ * 2. Powers down the amplifier following the proper sequence:
+ *    - Sets STBY pin low (active) to put the device in standby mode
+ *    - Waits for the required 10ms as per datasheet
+ *    - Sets PD pin low (active) for complete shutdown
+ *    - Disables power supplies in the correct sequence
+ * 3. Destroys the mutex that was initialized during probe
+ * 
+ * This ensures that the device is properly shut down and all system resources
+ * are released when the driver is unloaded or the device is removed.
+ * 
+ * @param client: The I2C client device to remove
+ */
 static void tas6754_i2c_remove(struct i2c_client *client)
 {
-	struct device *dev = &client->dev;
-	struct tas6754_data *tas6754 = dev_get_drvdata(dev);
-	int ret;
+    struct device *dev = &client->dev;
+    struct tas6754_data *tas6754 = dev_get_drvdata(dev);
+    int ret;
 
-	cancel_delayed_work_sync(&tas6754->fault_check_work);
+    /* Cancel any pending fault check work */
+    cancel_delayed_work_sync(&tas6754->fault_check_work);
 
-	/* put the codec in stand-by */
-	if (tas6754->standby_gpio)
-		gpiod_set_value_cansleep(tas6754->standby_gpio, 1);
+    /* Put the device in standby mode first (STBY pin low = active) */
+    if (tas6754->stby_gpio) {
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
+        /* Wait 10ms as per datasheet before removing power */
+        msleep(10);
+    }
 
-	ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies),
-				     tas6754->supplies);
-	if (ret < 0)
-		dev_err(dev, "unable to disable supplies: %d\n", ret);
+    /* Assert PD pin for complete shutdown (PD pin low = active) */
+    if (tas6754->pd_gpio)
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 0);
+
+    /* Disable power supplies */
+    ret = regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+    if (ret < 0)
+        dev_err(dev, "unable to disable supplies: %d\n", ret);
+
+    /* Destroy mutex */
+    mutex_destroy(&tas6754->mutex);
+
+    dev_info(dev, "TAS6754 removed\n");
 }
 
 static const struct i2c_device_id tas6754_i2c_ids[] = {
@@ -3058,6 +3129,41 @@ static const struct i2c_device_id tas6754_i2c_ids[] = {
 };
 MODULE_DEVICE_TABLE(i2c, tas6754_i2c_ids);
 
+
+/**
+ * @brief tas6754_i2c_driver - I2C driver definition for TAS6754 amplifier
+ * 
+ * This structure defines the I2C driver for the TAS6754 Class-D audio amplifier.
+ * It registers the driver with the Linux I2C subsystem and provides the necessary
+ * callbacks and identification information for proper device detection and initialization.
+ * 
+ * The driver includes:
+ * 
+ * - driver.name: "tas6754" - The name of the driver used for logging and identification
+ * 
+ * - driver.of_match_table: Device Tree matching table (tas6754_of_ids)
+ *   - Enables automatic driver binding for devices with compatible = "ti,tas6754"
+ *   - Allows configuration through Device Tree
+ * 
+ * - probe: tas6754_i2c_probe callback
+ *   - Called when a matching device is found
+ *   - Initializes the device, allocates resources, and registers with ALSA SoC
+ *   - Sets up GPIOs, regulators, and initial device configuration
+ *   - Implements the power-up sequence according to the datasheet
+ * 
+ * - remove: tas6754_i2c_remove callback
+ *   - Called when the device is removed or the driver is unloaded
+ *   - Performs clean shutdown and releases all allocated resources
+ *   - Implements the power-down sequence according to the datasheet
+ * 
+ * - id_table: tas6754_i2c_ids
+ *   - Defines the I2C device IDs that this driver supports
+ *   - Enables non-Device Tree based device detection
+ * 
+ * This driver structure is registered with the Linux I2C subsystem using the
+ * module_i2c_driver() macro, which handles proper initialization and cleanup
+ * of the driver during module load and unload.
+ */
 static struct i2c_driver tas6754_i2c_driver = {
 	.driver = {
 		.name = "tas6754",
@@ -3068,6 +3174,8 @@ static struct i2c_driver tas6754_i2c_driver = {
 	.id_table = tas6754_i2c_ids,
 };
 module_i2c_driver(tas6754_i2c_driver);
+
+/** @} */
 
 MODULE_AUTHOR("Your Name <your.email@example.com>");
 MODULE_DESCRIPTION("TAS6754 Audio amplifier driver");
