@@ -571,14 +571,16 @@ static const struct snd_soc_dapm_route tas6754_audio_map[] = {
 };
 
 /**
- * tas6754_hw_params
- * @brief: Configure hardware parameters for audio stream (sample rate, bit depth, channels)
- * 
- * @substream:
- * @params:
- * @dai:
- * 
- * @return
+ * tas6754_hw_params - Configure the TAS6754 for the current audio stream
+ * @substream: The audio substream
+ * @params: Stream parameters
+ * @dai: The DAI interface
+ *
+ * Configures the device for the specified audio parameters including
+ * sample rate, bit depth, channel count, and interface format. Handles
+ * TDM mode configuration, channel offsets, and SDIN routing.
+ *
+ * Return: 0 on success, negative error code on failure
  */
 static int tas6754_hw_params(struct snd_pcm_substream *substream,
                             struct snd_pcm_hw_params *params,
@@ -590,6 +592,8 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
     u8 audio_intf_ctrl, sdin_ctrl, offset_msb = 0, audio_offset = 0;
     int ret;
     
+    mutex_lock(&tas6754->mutex);
+    
     rate = params_rate(params);
     channels = params_channels(params);
     format = params_format(params);
@@ -599,15 +603,29 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
     tas6754->sample_rate = rate;
     tas6754->channels = channels;
     
+    /* Mark playback as active for this substream */
+    if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+        tas6754->playback_active = true;
+    
+    /* Skip hardware configuration if not powered */
+    if (!tas6754->powered) {
+        dev_dbg(component->dev, "Storing hw_params for later (device not powered)\n");
+        mutex_unlock(&tas6754->mutex);
+        return 0;
+    }
+    
     /* Read current audio interface control register */
     ret = snd_soc_component_read(component, TAS6754_AUDIO_INTERFACE_CTRL, &audio_intf_ctrl);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to read audio interface control: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
     
     /* Configure TDM mode if needed */
     if (channels > 4) {
         /* Enable TDM mode for > 4 channels */
-        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_TDM_MODE;;
+        audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_TDM_MODE;
         tas6754->tdm_mode = true;
         
         /* Make sure DSP format is set */
@@ -617,8 +635,11 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
     
     /* Write updated audio interface control register */
     ret = snd_soc_component_write(component, TAS6754_AUDIO_INTERFACE_CTRL, audio_intf_ctrl);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to write audio interface control: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
     
     /* Configure SDIN_CTRL register for data length */
     sdin_ctrl = 0;
@@ -639,6 +660,7 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
         break;
     default:
         dev_err(component->dev, "Unsupported bit depth: %u\n", tas6754->bit_depth);
+        mutex_unlock(&tas6754->mutex);
         return -EINVAL;
     }
     
@@ -669,8 +691,11 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
         
         /* Configure GPIO as SDIN2 */
         ret = tas6754_configure_sdin2(component, tas6754->sdin2_gpio_num);
-        if (ret < 0)
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to configure SDIN2: %d\n", ret);
+            mutex_unlock(&tas6754->mutex);
             return ret;
+        }
     } else {
         /* Default: use SDIN_1 for all channels */
         sdin_ctrl |= TAS6754_SDIN_CTRL_TDM_AUDIO_SDIN1;
@@ -678,8 +703,11 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
     
     /* Write SDIN_CTRL register */
     ret = snd_soc_component_write(component, TAS6754_SDIN_CTRL, sdin_ctrl);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to write SDIN control: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
     
     /* Configure channel offsets if needed */
     if (tas6754->dsp_a_mode || tas6754->tdm_mode || tas6754->channel_offset != 0) {
@@ -698,12 +726,18 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
         
         /* Write offset registers */
         ret = snd_soc_component_write(component, TAS6754_SDIN_OFFSET_MSB, offset_msb);
-        if (ret < 0)
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to write offset MSB: %d\n", ret);
+            mutex_unlock(&tas6754->mutex);
             return ret;
+        }
         
         ret = snd_soc_component_write(component, TAS6754_SDIN_AUDIO_OFFSET, audio_offset);
-        if (ret < 0)
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to write audio offset: %d\n", ret);
+            mutex_unlock(&tas6754->mutex);
             return ret;
+        }
         
         /* If low latency is enabled in TDM mode, configure its offset */
         if (tas6754->tdm_mode && tas6754->ll_enabled) {
@@ -719,35 +753,60 @@ static int tas6754_hw_params(struct snd_pcm_substream *substream,
             
             /* Write updated offset MSB register */
             ret = snd_soc_component_write(component, TAS6754_SDIN_OFFSET_MSB, offset_msb);
-            if (ret < 0)
+            if (ret < 0) {
+                dev_err(component->dev, "Failed to write updated offset MSB: %d\n", ret);
+                mutex_unlock(&tas6754->mutex);
                 return ret;
+            }
             
             /* Write LL offset LSB register */
             ret = snd_soc_component_write(component, TAS6754_SDIN_LL_OFFSET, ll_offset);
-            if (ret < 0)
+            if (ret < 0) {
+                dev_err(component->dev, "Failed to write LL offset: %d\n", ret);
+                mutex_unlock(&tas6754->mutex);
                 return ret;
+            }
         }
     }
     
     /* Wait for the device to detect the sample rate */
     msleep(10);
     
-    /* Verify that the device has detected the correct sample rate */
+    /* Verify that the device has detected the correct sample rate. Detect and stores SCLK ratio. */
     ret = tas6754_verify_sample_rate(component, rate);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to verify sample rate: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
     
+    dev_dbg(component->dev, "HW params set: %dHz, %d channels, %d-bit\n", 
+            rate, channels, tas6754->bit_depth);
+    
+    mutex_unlock(&tas6754->mutex);
     return 0;
 }
 
 /**
- * tas6754_verify_sample_rate
- * @brief: Verify that the device has detected the correct sample rate and SCLK ratio
+ * tas6754_verify_sample_rate - Verify the TAS6754 has detected the correct sample rate
+ * @component: The ALSA SoC component
+ * @rate: Expected sample rate in Hz
+ *
+ * This function verifies that the TAS6754 has correctly detected the
+ * configured sample rate by reading the FS_MON register and comparing
+ * the detected rate code with the expected code for the given rate.
  * 
- * @component:
- * @rate:
- * 
- * @return:
+ * The function also reads and validates the SCLK ratio (SCLK frequency / sample rate)
+ * from the FS_MON and SCLK_MON registers, ensuring it's within the supported
+ * range of 32Fs to 512Fs. The detected SCLK ratio is stored in the driver's
+ * private data for diagnostic purposes.
+ *
+ * Special handling is provided for 44.1kHz family rates (44.1kHz, 88.2kHz, 176.4kHz)
+ * since the datasheet doesn't explicitly list their detection codes. For these rates,
+ * the function accepts whatever code the device reports to maintain compatibility.
+ *
+ * Return: 0 on success (even if there's a sample rate mismatch but the device
+ * is still operational), negative error code on failure
  */
 static int tas6754_verify_sample_rate(struct snd_soc_component *component, unsigned int rate)
 {
@@ -830,45 +889,63 @@ static int tas6754_verify_sample_rate(struct snd_soc_component *component, unsig
         return -EIO;
     }
     
-    /* Store the detected SCLK ratio for reference 
-	TODO: [Optional] SCLK ratio detected by the device. Useful for:
-		- Debugging
-		- Potentially adjusting settings based on the detected ratio
-		- Reporting the ratio through sysfs or debugfs*/
-    //tas6754->detected_sclk_ratio = sclk_ratio;
+    /* Store the detected SCLK ratio for reference */
+    tas6754->detected_sclk_ratio = sclk_ratio;
     
     return 0;
 }
 
 /**
- * tas6754_set_dai_fmt
- * @brief: Set DAI format, Clock polarity and related settings.
- * 
- * @dai:
- * @fmt:
- * 
- * @return:
+ * tas6754_set_dai_fmt - Set the DAI format for the TAS6754
+ * @dai: The DAI interface
+ * @fmt: Format to set
+ *
+ * Configures the digital audio interface format including:
+ * - Data format (I2S, Left-Justified, Right-Justified, DSP/TDM)
+ * - Clock polarity settings
+ * - FSYNC pulse width for DSP/TDM modes
+ * - Last sample hold behavior
+ *
+ * The function stores format settings in the driver's private data
+ * and configures the device registers accordingly.
+ *
+ * Return: 0 on success, negative error code on failure
  */
 static int tas6754_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 {
     struct snd_soc_component *component = dai->component;
     struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
     u8 audio_intf_ctrl = 0;
-	u8 sclk_inv_ctrl = 0;
+    u8 sclk_inv_ctrl = 0;
     int ret;
     
+    mutex_lock(&tas6754->mutex);
+    
     /* Store the DAI format for later use */
-    tas6754->dai_fmt = fmt & SND_SOC_DAIFMT_FORMAT_MASK;
+    tas6754->dai_fmt = fmt;
+    
+    /* Skip hardware configuration if not powered */
+    if (!tas6754->powered) {
+        dev_dbg(component->dev, "Storing DAI format for later (device not powered)\n");
+        mutex_unlock(&tas6754->mutex);
+        return 0;
+    }
     
     /* Read current audio interface control register */
     ret = snd_soc_component_read(component, TAS6754_AUDIO_INTERFACE_CTRL, &audio_intf_ctrl);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to read audio interface control: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
 
     /* Read current SCLK inversion control register */
     ret = snd_soc_component_read(component, TAS6754_SCLK_INV_CTRL, &sclk_inv_ctrl);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to read SCLK inversion control: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
     
     /* Clear SCLK inversion bits */
     sclk_inv_ctrl &= ~(TAS6754_SCLK_INV_CTRL_SCLK_INV_TX_MASK | TAS6754_SCLK_INV_CTRL_SCLK_INV_MASK);
@@ -917,10 +994,11 @@ static int tas6754_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
     default:
         dev_err(component->dev, "Unsupported DAI format %d\n",
                 fmt & SND_SOC_DAIFMT_FORMAT_MASK);
+        mutex_unlock(&tas6754->mutex);
         return -EINVAL;
     }
 
-	/* Clock polarity setting */
+    /* Clock polarity setting */
     switch (fmt & SND_SOC_DAIFMT_INV_MASK) {
     case SND_SOC_DAIFMT_NB_NF:
         /* BCLK not inverted, FSYNC not inverted */
@@ -944,13 +1022,17 @@ static int tas6754_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
     default:
         dev_err(component->dev, "Unsupported clock polarity setting: 0x%x\n",
                 fmt & SND_SOC_DAIFMT_INV_MASK);
+        mutex_unlock(&tas6754->mutex);
         return -EINVAL;
     }
     
     /* Write SCLK inversion control register */
     ret = snd_soc_component_write(component, TAS6754_SCLK_INV_CTRL, sclk_inv_ctrl);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to write SCLK inversion control: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
     
     /* FSYNC pulse width for DSP/TDM mode */
     if ((fmt & SND_SOC_DAIFMT_FORMAT_MASK) == SND_SOC_DAIFMT_DSP_A ||
@@ -960,23 +1042,29 @@ static int tas6754_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
         if (tas6754->short_fsync) {
             /* FSYNC pulse < 8 SCLK cycles */
             audio_intf_ctrl &= ~(0x03); /* Clear FS PULSE WIDTH bits (1-0) */
-            audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_SHORT;//TAS6754_FS_PULSE_WIDTH_SHORT;
+            audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_SHORT;
         } else {
             /* FSYNC pulse >= 8 SCLK cycles (default) */
             audio_intf_ctrl &= ~(0x03); /* Clear FS PULSE WIDTH bits (1-0) */
-            audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_LONG;// TAS6754_FS_PULSE_WIDTH_LONG;
+            audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_FS_PULSE_WIDTH_LONG;
         }
     }
     
     /* Enable last sample hold for better audio quality during clock errors */
     audio_intf_ctrl &= ~(0x80); /* Clear last sample hold bit (7) */
-    audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_LAST_SAMPLE_HOLD_ENABLE;//TAS6754_LAST_SAMPLE_HOLD_EN;
+    audio_intf_ctrl |= TAS6754_AUDIO_INTERFACE_LAST_SAMPLE_HOLD_ENABLE;
     
     /* Write audio interface control register */
     ret = snd_soc_component_write(component, TAS6754_AUDIO_INTERFACE_CTRL, audio_intf_ctrl);
-    if (ret < 0)
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to write audio interface control: %d\n", ret);
+        mutex_unlock(&tas6754->mutex);
         return ret;
+    }
     
+    dev_dbg(component->dev, "DAI format set: 0x%08x\n", fmt);
+    
+    mutex_unlock(&tas6754->mutex);
     return 0;
 }
 
