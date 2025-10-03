@@ -55,45 +55,61 @@ static const char * const tas6754_supply_names[] = {
 
 #define TAS6754_NUM_SUPPLIES ARRAY_SIZE(tas6754_supply_names)
 
-struct tas6754_data {
-	struct device *dev;
-	struct regmap *regmap;
-	struct regulator_bulk_data supplies[TAS6754_NUM_SUPPLIES];
-	struct delayed_work fault_check_work;
-	unsigned int last_oc_dc_fault;//last_cfault
-	unsigned int last_power_fault;//last_fault1;
-	unsigned int last_ot_fault;//last_fault2;
-	unsigned int last_cbc_fault_warn;//last_warn;
-	unsigned int last_rtldg_ol_sl_fault;
-	struct gpio_desc *pd_gpio;
-    struct gpio_desc *stby_gpio;
-	struct gpio_desc *mute_gpio; /* GPIO for external mute circuit (optional)*/
 
-    /* Audio interface configuration (ENHANCED)*/
-    bool tdm_mode;                		/* Whether in TDM mode */
-    bool dsp_a_mode;              		/* Whether in DSP_A mode (needs 1-bit offset) */
-    bool short_fsync;             		/* Whether FSYNC pulse is < 8 SCLK cycles */
-    bool use_sdin2_for_ch34;      		/* Whether to use SDIN2 for channels 3-4 */
-    bool ll_enabled;              		/* Whether low latency channels are enabled */
-    unsigned int bit_depth;       		/* Current bit depth */
-    unsigned int sample_rate;     		/* Current sample rate */
-    unsigned int channels;        		/* Current channel count */
-    unsigned int dai_fmt;         		/* Current DAI format */
-    unsigned int channel_offset;  		/* Custom channel offset (in bits) */
-    unsigned int ll_offset;       		/* Low latency channel offset (in bits) */
-    unsigned int sdin2_gpio_num;  		/* GPIO number to use for SDIN2 (1 or 2) */
-    unsigned int tdm_slots;       		/* Number of TDM slots (4, 8, or 16) */
-    unsigned int tdm_slot_width;  		/* TDM slot width (16, 20, 24, or 32) */
-    unsigned int channel_map[4];  		/* Mapping of channels to TDM slots */
-    unsigned int audio_swap;      		/* Audio channel swap option */
-    unsigned int ll_swap;         		/* Low latency channel swap option */
-	//bool support_rate_change;  		/* TODO: [Desired] to support on-the-fly rate changes */
+struct tas6754_data {
+    struct device *dev;
+    struct regmap *regmap;
+    struct regulator_bulk_data supplies[TAS6754_NUM_SUPPLIES];
+    struct delayed_work fault_check_work;
+    struct mutex mutex;                /* Mutex for thread safety */
+    
+    /* GPIO control */
+    struct gpio_desc *pd_gpio;
+    struct gpio_desc *stby_gpio;
+    struct gpio_desc *mute_gpio;       /* GPIO for external mute circuit (optional) */
+    
+    /* State tracking */
+    bool powered;                      /* TODO: [Desired] to implement Power State Tracking -> adding a state variable to track power state */
+	bool cache_sync;  				   /* TODO: [Optional] to implement whether regcache needs syncing */
+    bool playback_active;              /* Whether audio playback is active */
+    bool muted;                        /* Whether the device is currently muted */
+    
+    /* Fault tracking */
+    unsigned int last_oc_dc_fault;
+    unsigned int last_power_fault;
+    unsigned int last_ot_fault;
+    unsigned int last_cbc_fault_warn;
+    unsigned int last_rtldg_ol_sl_fault;
+    
+    /* Audio interface configuration */
+    bool tdm_mode;                     /* Whether in TDM mode */
+    bool dsp_a_mode;                   /* Whether in DSP_A mode (needs 1-bit offset) */
+    bool short_fsync;                  /* Whether FSYNC pulse is < 8 SCLK cycles */
+    bool use_sdin2_for_ch34;           /* Whether to use SDIN2 for channels 3-4 */
+    bool ll_enabled;                   /* Whether low latency channels are enabled */
+    bool support_rate_change;          /* TODO: [Desired] to implement support on-the-fly rate changes */
+    
+    /* Audio parameters */
+    unsigned int bit_depth;            /* Current bit depth */
+    unsigned int sample_rate;          /* Current sample rate */
+    unsigned int channels;             /* Current channel count */
+    unsigned int dai_fmt;              /* Current DAI format */
+    unsigned int channel_offset;       /* Custom channel offset (in bits) */
+    unsigned int ll_offset;            /* Low latency channel offset (in bits) */
+    unsigned int sdin2_gpio_num;       /* GPIO number to use for SDIN2 (1 or 2) */
+    unsigned int tdm_slots;            /* Number of TDM slots (4, 8, or 16) */
+    unsigned int tdm_slot_width;       /* TDM slot width (16, 20, 24, or 32) */
+    unsigned int channel_map[4];       /* Mapping of channels to TDM slots */
+    unsigned int audio_swap;           /* Audio channel swap option */
+    unsigned int ll_swap;              /* Low latency channel swap option */
+    unsigned int detected_sclk_ratio;  /* SCLK ratio detected by the device */
 	//unsigned int detected_sclk_ratio; /* TODO: [Optional] SCLK ratio detected by the device. Useful for:*/
 															/*-Debugging
 															-Potentially adjusting settings based on the detected ratio
-															-Reporting the ratio through sysfs or debugfs*/															
-	//tas6754->powered = false;			/* TODO: [Desired] Power State Tracking: Consider adding a state variable to track power state */
-
+															-Reporting the ratio through sysfs or debugfs*/
+    /* Volume and audio settings */
+    unsigned int volume[4];            /* Current volume settings for each channel */
+    unsigned int dc_load_diag_config;  /* DC load diagnostics configuration */
 };
 
 /*
@@ -1707,35 +1723,102 @@ static int tas6754_power_off(struct snd_soc_component *component)
 }
 
 
+/**
+ * TODO:
+ * @ref: TRM[4.3.1.1.1.1 Quick-Start Sequence, p-24]
+ * In some cases a quick startup time from shutdown to audio playback is needed. For the quickest startup the DC 
+ * Load Diagnostics can be aborted. This allows the device to go into PLAY state without having to wait for DC 
+ * Load Diagnostics to finish.
+ * The procedure implementation for a quick-start sequence is PENDING. In future, evaluate the possibility of adding this feature.
+ */
+/**
+ * tas6754_power_on - Power on the TAS6754 audio amplifier
+ * @brief: Implements the power-on sequence for the TAS6754 Class-D
+ * amplifier according to the datasheet specifications. The sequence includes:
+ *
+ * 1. Keeping PD and STBY pins low initially
+ * 2. Enabling power supplies (PVDD, VBAT, DVDD)
+ * 3. Releasing PD pin to power up digital circuitry
+ * 4. Waiting 4ms as specified in the datasheet
+ * 5. Enabling register access and synchronizing register cache
+ * 6. Checking and clearing any power-on-reset (POR) faults
+ * 7. Releasing STBY pin to power up analog circuitry
+ * 8. Setting initial channel states (PLAY with appropriate mute settings)
+ * 9. Waiting for device initialization and auto-diagnostics to complete
+ *
+ * The function handles both GPIO-based control (using pd_gpio and stby_gpio)
+ * and register-based control when GPIOs are not available. It also properly
+ * configures the initial state of the amplifier channels based on the
+ * availability of an external mute circuit.
+ *
+ * After successful execution, the amplifier will be in a powered-on state
+ * but typically still muted, ready for audio playback to begin.
+ *
+ * @return: Return 0 on success, negative error code on failure
+ */
 static int tas6754_power_on(struct snd_soc_component *component)
 {
-	struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
-	int ret;
-	u8 chan_states;
-	int no_auto_diags = 0;
-	unsigned int reg_val;
+    struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
+    int ret;
+    u8 chan_states;
+    int no_auto_diags = 0;
+    unsigned int reg_val;
 
-	dev_dbg(component->dev, "%s: Powering on TAS6754\n", __func__);
+    dev_dbg(component->dev, "%s: Powering on TAS6754\n", __func__);
 
-	if (!regmap_read(tas6754->regmap, TAS6754_DC_LDG_CTRL, &reg_val))
-		no_auto_diags = reg_val & TAS6754_DC_LDG_BYPASS_MASK;
+    /* 1. Keep PD and STBY pins low initially */
+    if (tas6754->pd_gpio)
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 0);
+    
+    if (tas6754->stby_gpio)
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
 
+    /* 2. Check for DC load diagnostics bypass setting */
+    if (!regmap_read(tas6754->regmap, TAS6754_DC_LDG_CTRL, &reg_val))
+        no_auto_diags = reg_val & TAS6754_DC_LDG_BYPASS_MASK;
 
-	ret = regulator_bulk_enable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
-	if (ret < 0) {
-		dev_err(component->dev, "failed to enable supplies: %d\n", ret);
-		return ret;
-	}
+    /* 3. Enable power supplies */
+    ret = regulator_bulk_enable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+    if (ret < 0) {
+        dev_err(component->dev, "failed to enable supplies: %d\n", ret);
+        return ret;
+    }
 
-	regcache_cache_only(tas6754->regmap, false);
+    /* 4. Wait for supplies to stabilize */
+    msleep(1);
 
-	ret = regcache_sync(tas6754->regmap);
-	if (ret < 0) {
-		dev_err(component->dev, "failed to sync regcache: %d\n", ret);
-		return ret;
-	}
+    /* 5. Release PD pin to power up digital circuitry */
+    if (tas6754->pd_gpio)
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 1);
 
-	/* Set initial channel states */
+    /* 6. Wait minimum 4ms before releasing STBY pin */
+    msleep(4);
+
+    /* 7. Enable register access */
+    regcache_cache_only(tas6754->regmap, false);
+    ret = regcache_sync(tas6754->regmap);
+    if (ret < 0) {
+        dev_err(component->dev, "failed to sync regcache: %d\n", ret);
+        goto err_disable_supplies;
+    }
+
+    /* 8. Check and clear any power faults */
+    ret = regmap_read(tas6754->regmap, TAS6754_POWER_FAULT_LATCHED, &reg_val);
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to read POWER_FAULT_LATCHED: %d\n", ret);
+        goto err_disable_supplies;
+    }
+
+    if (reg_val & BIT(7)) {
+        dev_dbg(component->dev, "POR fault detected, clearing\n");
+        /* Fault is cleared by reading the register (already done above) */
+    }
+
+    /* 9. Release STBY pin to power up analog circuitry */
+    if (tas6754->stby_gpio)
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 1);
+
+    /* 10. Set initial channel states to either PLAY with normal volume or PLAY with mute depending on mute GPIO availability.*/
     if (tas6754->mute_gpio) {
         /* If using external mute circuit, set channels to PLAY state */
         /* but keep them muted via the GPIO */
@@ -1743,40 +1826,57 @@ static int tas6754_power_on(struct snd_soc_component *component)
         
         /* Set channels to PLAY state with normal volume in registers */
         ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_PLAY__NORMAL_VOLUME);
-		if (ret < 0) {
-			dev_err(component->dev, "Failed to set CH1/CH2 to PLAY state with NORMAL VOLUME: %d\n", ret);
-			return ret;
-		}
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to set CH1/CH2 to PLAY state with NORMAL VOLUME: %d\n", ret);
+            goto err_disable_supplies;
+        }
 
         ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_PLAY__NORMAL_VOLUME);
-		if (ret < 0) {
-			dev_err(component->dev, "Failed to set CH3/CH4 to PLAY state with NORMAL VOLUME: %d\n", ret);
-			return ret;
-		}
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to set CH3/CH4 to PLAY state with NORMAL VOLUME: %d\n", ret);
+            goto err_disable_supplies;
+        }
     } else {
         /* If no external mute circuit, set channels to PLAY state but muted */
         ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_PLAY__MUTE);
-		if (ret < 0) {
-			dev_err(component->dev, "Failed to set CH1/CH2 to PLAY state but MUTE: %d\n", ret);
-			return ret;
-		}
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to set CH1/CH2 to PLAY state but MUTE: %d\n", ret);
+            goto err_disable_supplies;
+        }
         ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH3_CH4, TAS6754_STATE_CTRL_CH3_CH4_PLAY__MUTE);
-		if (ret < 0) {
-			dev_err(component->dev, "Failed to set CH3/CH4 to PLAY state but MUTE: %d\n", ret);
-			return ret;
-		}
+        if (ret < 0) {
+            dev_err(component->dev, "Failed to set CH3/CH4 to PLAY state but MUTE: %d\n", ret);
+            goto err_disable_supplies;
+        }
     }
 
-	/* any time we come out of HIZ, the output channels automatically run DC
-	 * load diagnostics if autodiagnotics are enabled. wait here until this
-	 * completes.
-	 */
-	if (!no_auto_diags)
-		msleep(230);
+    /* 11. Wait for device to fully power up */
+    msleep(6);
 
-	dev_dbg(component->dev, "%s: TAS6754 powered on\n", __func__);
-	return 0;
+    /* 12. Wait for auto-diagnostics if enabled */
+    if (!no_auto_diags)
+        msleep(230);
+
+    /** 
+	* @TODO:
+	* 13. Unmute if using external mute circuit and ready to play audio */
+    /* Note: You might want to move this to a separate unmute function */
+    /*
+    if (tas6754->mute_gpio)
+        gpiod_set_value_cansleep(tas6754->mute_gpio, 0);
+    */
+
+    dev_dbg(component->dev, "%s: TAS6754 powered on\n", __func__);
+    return 0;
+
+err_disable_supplies:
+    regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+    return ret;
 }
+
+
+
+
 
 static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_soc_bias_level level)
 {
@@ -2304,109 +2404,120 @@ static const struct of_device_id tas6754_of_ids[] = {
 MODULE_DEVICE_TABLE(of, tas6754_of_ids);
 #endif
 
+/**
+ * tas6754_i2c_probe - Probe and initialize the TAS6754 audio amplifier
+ *
+ * @brief: Initializes the TAS6754 Class-D audio amplifier when the device
+ * is detected on the I2C bus. It performs the following operations:
+ *
+ * 1. Allocates and initializes the driver's private data structure
+ * 2. Sets up the regmap for register access
+ * 3. Initializes audio interface settings with sensible defaults
+ * 4. Configures GPIO pins for PD (Power Down), STBY (Standby), and optional mute control
+ * 5. Sets up power supplies according to the recommended sequence:
+ *    - Keeps PD and STBY pins low initially
+ *    - Enables power supplies (PVDD, VBAT, DVDD)
+ *    - Releases PD pin with appropriate timing
+ *    - Releases STBY pin with appropriate timing
+ * 6. Checks for and clears any Power-On-Reset (POR) faults
+ * 7. Performs a device reset to establish a well-defined startup state
+ * 8. Initializes DC Load Diagnostics settings
+ * 9. Sets default volume levels for all channels
+ * 10. Registers the codec with the ALSA SoC framework
+ * 11. Sets up periodic fault checking
+ *
+ * The function follows the power-up sequence specified in the TAS6754 datasheet
+ * to ensure proper device initialization. It includes appropriate error handling
+ * and cleanup in case any step fails.
+ * @client: I2C client for the device
+ * 
+ * @return: Return 0 on success, negative error code on failure
+ */
 static int tas6754_i2c_probe(struct i2c_client *client)
 {
-	struct device *dev = &client->dev;
-	struct tas6754_data *tas6754;
-	int ret;
-	int i;
+    struct device *dev = &client->dev;
+    struct tas6754_data *tas6754;
+    unsigned int reg_val;
+    int ret;
+    int i;
 
+    /* Allocate driver data */
+    tas6754 = devm_kzalloc(dev, sizeof(*tas6754), GFP_KERNEL);
+    if (!tas6754)
+        return -ENOMEM;
+    
+    dev_set_drvdata(dev, tas6754);
+    tas6754->dev = dev;
 
+    /* Initialize mutex for thread safety */
+    mutex_init(&tas6754->mutex);
 
-    /* TODO: Double check this -> Initialize audio interface settings */
+    /* Initialize state tracking variables */
+    tas6754->powered = false;
+    tas6754->cache_sync = false;
+    tas6754->playback_active = false;
+    tas6754->muted = true;  /* Start muted for safety */
+    
+    /* Initialize volume settings to default values */
+    for (i = 0; i < 4; i++)
+        tas6754->volume[i] = 0x30;  /* 0dB - default from datasheet */
+    
+    tas6754->dc_load_diag_config = TAS6754_DC_LDG_CTRL_DEFAULT;
+
+    /* Initialize regmap */
+    tas6754->regmap = devm_regmap_init_i2c(client, &tas6754_regmap_config);
+    if (IS_ERR(tas6754->regmap)) {
+        ret = PTR_ERR(tas6754->regmap);
+        dev_err(dev, "unable to allocate register map: %d\n", ret);
+        return ret;
+    }
+
+    /* Initialize audio interface settings */
     tas6754->tdm_mode = false;
     tas6754->dsp_a_mode = false;
     tas6754->short_fsync = false;
     tas6754->use_sdin2_for_ch34 = false;
     tas6754->ll_enabled = false;
-    tas6754->bit_depth = 24;  /* Default bit depth */
+    tas6754->support_rate_change = false;
+    tas6754->bit_depth = 24;  				/* Default bit depth */
     tas6754->sample_rate = 0;
     tas6754->channels = 0;
+    tas6754->dai_fmt = 0;
     tas6754->channel_offset = 0;
-    tas6754->ll_offset = 96;  /* Default LL offset is 96 SCLKs */
-    tas6754->sdin2_gpio_num = 1;  /* Default to GPIO1 for SDIN2 */
-    tas6754->tdm_slots = 4;   /* Default to 4 TDM slots */
-    tas6754->tdm_slot_width = 24;  /* Default to 24-bit slots */
-    tas6754->audio_swap = 0;  /* Default audio channel mapping */
-    tas6754->ll_swap = 0;     /* Default LL channel mapping */
+    tas6754->ll_offset = 96;  				/* Default LL offset is 96 SCLKs */
+    tas6754->sdin2_gpio_num = 1; 			/* Default to GPIO1 for SDIN2 */
+    tas6754->tdm_slots = 4;   				/* Default to 4 TDM slots */
+    tas6754->tdm_slot_width = 24; 			/* Default to 24-bit slots */
+    tas6754->audio_swap = 0;  				/* Default audio channel mapping */
+    tas6754->ll_swap = 0;    				/* Default LL channel mapping */
+    tas6754->detected_sclk_ratio = 0;  		/* Will be detected during operation */
 
+    /* Initialize fault tracking variables */
+    tas6754->last_oc_dc_fault = 0;
+    tas6754->last_power_fault = 0;
+    tas6754->last_ot_fault = 0;
+    tas6754->last_cbc_fault_warn = 0;
+    tas6754->last_rtldg_ol_sl_fault = 0;
 
-	/* Initialize DC Load Diagnostics */
-    dev_dbg(component->dev, "Initializing DC Load Diagnostics\n");
-    snd_soc_component_write(component, TAS6754_DC_LDG_CTRL, TAS6754_DC_LDG_CTRL_DEFAULT);
-    snd_soc_component_write(component, TAS6754_DC_LDG_LO_CTRL, TAS6754_DC_LDG_LO_CTRL_DEFAULT);
+    /* Get control of the PD pin and set it LOW initially (active) */
+    tas6754->pd_gpio = devm_gpiod_get_optional(dev, "pd", GPIOD_OUT_LOW);
+    if (IS_ERR(tas6754->pd_gpio)) {
+        if (PTR_ERR(tas6754->pd_gpio) == -EPROBE_DEFER)
+            return -EPROBE_DEFER;
+        dev_info(dev, "failed to get PD GPIO: %ld\n", PTR_ERR(tas6754->pd_gpio));
+        tas6754->pd_gpio = NULL;
+    }
 
-	/* Initialize volumes to default moderate levels */
-    dev_dbg(component->dev, "Setting default volume levels to -20 dB\n");
-    snd_soc_component_write(component, TAS6754_DIG_VOL_CH1, TAS6754_DIG_VOL_CH1_DEFAULT);
-    snd_soc_component_write(component, TAS6754_DIG_VOL_CH2, TAS6754_DIG_VOL_CH2_DEFAULT);
-    snd_soc_component_write(component, TAS6754_DIG_VOL_CH3, TAS6754_DIG_VOL_CH3_DEFAULT);
-    snd_soc_component_write(component, TAS6754_DIG_VOL_CH4, TAS6754_DIG_VOL_CH4_DEFAULT);
+    /* Get control of the STBY pin and set it LOW initially (active) */
+    tas6754->stby_gpio = devm_gpiod_get_optional(dev, "standby", GPIOD_OUT_LOW);
+    if (IS_ERR(tas6754->stby_gpio)) {
+        if (PTR_ERR(tas6754->stby_gpio) == -EPROBE_DEFER)
+            return -EPROBE_DEFER;
+        dev_info(dev, "failed to get STBY GPIO: %ld\n", PTR_ERR(tas6754->stby_gpio));
+        tas6754->stby_gpio = NULL;
+    }
 
-
-
-
-
-
-
-	tas6754 = devm_kzalloc(dev, sizeof(*tas6754), GFP_KERNEL);
-	if (!tas6754)
-		return -ENOMEM;
-	dev_set_drvdata(dev, tas6754);
-
-	tas6754->dev = dev;
-
-	tas6754->regmap = devm_regmap_init_i2c(client, &tas6754_regmap_config);
-	if (IS_ERR(tas6754->regmap)) {
-		ret = PTR_ERR(tas6754->regmap);
-		dev_err(dev, "unable to allocate register map: %d\n", ret);
-		return ret;
-	}
-	
-	/*
-	 * Get control of the PD pin and set it HIGH to take the codec
-	 * out of the standby.
-	 */
-	tas6754->pd_gpio = devm_gpiod_get_optional(tas6754->dev, "pd", GPIOD_OUT_HIGH);
-	if (IS_ERR(tas6754->pd_gpio)) {
-		if (PTR_ERR(tas6754->pd_gpio) == -EPROBE_DEFER)
-			return -EPROBE_DEFER;
-		dev_info(dev, "failed to get PD GPIO: %ld\n",
-			PTR_ERR(tas6754->pd_gpio));
-		tas6754->pd_gpio = NULL;
-	}
-
-	/*
-	 * Get control of the STBY pin and set it LOW to take the codec
-	 * out of the standby mode (DEEP SLEEP mode).
-	 */
-	tas6754->stby_gpio = devm_gpiod_get_optional(tas6754->dev, "standby", GPIOD_OUT_HIGH);
-	if (IS_ERR(tas6754->stby_gpio)) {
-		if (PTR_ERR(tas6754->stby_gpio) == -EPROBE_DEFER)
-			return -EPROBE_DEFER;
-		dev_info(dev, "failed to get STBY GPIO: %ld\n",
-			PTR_ERR(tas6754->stby_gpio));
-		tas6754->stby_gpio = NULL;
-	}
-
-	/**
-	 * @TODO:[DTS] Double check this configuration in DTS
-	 * 
-	 * tas6754: audio-codec@4c {
-	 * compatible = "ti,tas6754";
-	 * reg = <0x4c>;
-	 * #sound-dai-cells = <0>;
-    /* Optional external mute circuit */
-    // mute-gpios = <&gpio1 15 GPIO_ACTIVE_HIGH>;    
-    /* Other properties */
-	//};
-	
-	/*
-	/* Get optional mute GPIO: 
-     * Even though TAS6754 Class-D amplifier doesn't have a dedicated MUTE pin,
-     * we support an optional external mute circuit controlled by GPIO.
-     * Set it HIGH initially to start with outputs muted.
-     */
+    /* Get optional mute GPIO */
     tas6754->mute_gpio = devm_gpiod_get_optional(dev, "mute", GPIOD_OUT_HIGH);
     if (IS_ERR(tas6754->mute_gpio)) {
         if (PTR_ERR(tas6754->mute_gpio) == -EPROBE_DEFER)
@@ -2419,52 +2530,135 @@ static int tas6754_i2c_probe(struct i2c_client *client)
         gpiod_set_value_cansleep(tas6754->mute_gpio, 1);
     }
 
+    /* Initialize regulators */
+    for (i = 0; i < ARRAY_SIZE(tas6754->supplies); i++)
+        tas6754->supplies[i].supply = tas6754_supply_names[i];
+    
+    ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+    if (ret) {
+        dev_err(dev, "unable to request supplies: %d\n", ret);
+        return ret;
+    }
 
+    /* Power up the device following the proper sequence */
+    
+    /* 1. Keep PD and STBY pins low initially */
+    if (tas6754->pd_gpio)
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 0);
+    if (tas6754->stby_gpio)
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
 
-	for (i = 0; i < ARRAY_SIZE(tas6754->supplies); i++)
-		tas6754->supplies[i].supply = tas6754_supply_names[i];
-	ret = devm_regulator_bulk_get(dev, ARRAY_SIZE(tas6754->supplies),
-				      tas6754->supplies);
-	if (ret) {
-		dev_err(dev, "unable to request supplies: %d\n", ret);
-		return ret;
-	}
+    /* 2. Enable regulators */
+    ret = regulator_bulk_enable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+    if (ret) {
+        dev_err(dev, "unable to enable supplies: %d\n", ret);
+        return ret;
+    }
 
-	ret = regulator_bulk_enable(ARRAY_SIZE(tas6754->supplies),
-				    tas6754->supplies);
-	if (ret) {
-		dev_err(dev, "unable to enable supplies: %d\n", ret);
-		return ret;
-	}
+    /* 3. Wait for supplies to stabilize */
+    msleep(1);
 
-	/* Reset device to establish well-defined startup state */
-	ret = regmap_update_bits(tas6754->regmap, TAS6754_RESET,
-				 TAS6754_RESET_DEVICE_RESET_MASK, TAS6754_RESET_DEVICE_RESET);
-	if (ret) {
-		dev_err(dev, "unable to reset device: %d\n", ret);
-		goto disable_regs;
-	}
-	ret = regmap_update_bits(tas6754->regmap, TAS6754_RESET,
-				 TAS6754_RESET_REGISTER_RESET_MASK, TAS6754_RESET_REGISTER_RESET);
-	if (ret) {
-		dev_err(dev, "unable to reset registers: %d\n", ret);
-		goto disable_regs;
-	}
+    /* 4. Release PD pin to power up digital circuitry */
+    if (tas6754->pd_gpio)
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 1);
 
-	INIT_DELAYED_WORK(&tas6754->fault_check_work, tas6754_fault_check_work);
+    /* 5. Wait minimum 4ms before releasing STBY pin */
+    msleep(4);
 
-	/* Register codec with ALSA  */
-	ret = devm_snd_soc_register_component(dev, &soc_codec_dev_tas6754, tas6754_dai, ARRAY_SIZE(tas6754_dai));
-	if (ret < 0) {
-		dev_err(dev, "unable to register codec: %d\n", ret);
-		goto disable_regs;
-	}
+    /* 6. Release STBY pin to power up analog circuitry */
+    if (tas6754->stby_gpio)
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 1);
 
-	return 0;
+    /* 7. Wait for device to fully power up */
+    msleep(6);
+    
+    /* Update power state */
+    tas6754->powered = true;
+
+    /* Check for POR condition and clear it */
+    ret = regmap_read(tas6754->regmap, TAS6754_POWER_FAULT_LATCHED, &reg_val);
+    if (ret) {
+        dev_err(dev, "failed to read power fault register: %d\n", ret);
+        goto disable_regs;
+    }
+
+    if (reg_val & BIT(7)) {
+        dev_dbg(dev, "Device went through POR cycle\n");
+        /* Fault is cleared by reading the register (already done above) */
+    }
+
+    /* Reset device to establish well-defined startup state */
+    ret = regmap_update_bits(tas6754->regmap, TAS6754_RESET,
+                            TAS6754_RESET_DEVICE_RESET_MASK, TAS6754_RESET_DEVICE_RESET);
+    if (ret) {
+        dev_err(dev, "unable to reset device: %d\n", ret);
+        goto disable_regs;
+    }
+    
+    ret = regmap_update_bits(tas6754->regmap, TAS6754_RESET,
+                            TAS6754_RESET_REGISTER_RESET_MASK, TAS6754_RESET_REGISTER_RESET);
+    if (ret) {
+        dev_err(dev, "unable to reset registers: %d\n", ret);
+        goto disable_regs;
+    }
+
+    /* Wait for reset to complete */
+    msleep(1);
+
+    /* Initialize DC Load Diagnostics */
+    ret = regmap_write(tas6754->regmap, TAS6754_DC_LDG_CTRL, tas6754->dc_load_diag_config);
+    if (ret) {
+        dev_err(dev, "failed to initialize DC load diagnostics control: %d\n", ret);
+        goto disable_regs;
+    }
+    
+    ret = regmap_write(tas6754->regmap, TAS6754_DC_LDG_LO_CTRL, TAS6754_DC_LDG_LO_CTRL_DEFAULT);
+    if (ret) {
+        dev_err(dev, "failed to initialize DC load diagnostics low control: %d\n", ret);
+        goto disable_regs;
+    }
+
+    /* Initialize volumes to default moderate levels */
+    for (i = 0; i < 4; i++) {
+        ret = regmap_write(tas6754->regmap, TAS6754_DIG_VOL_CH1 + i, tas6754->volume[i]);
+        if (ret) {
+            dev_err(dev, "failed to set CH%d volume: %d\n", i+1, ret);
+            goto disable_regs;
+        }
+    }
+
+    /* Initialize fault check work */
+    INIT_DELAYED_WORK(&tas6754->fault_check_work, tas6754_fault_check_work);
+
+    /* Register codec with ALSA */
+    ret = devm_snd_soc_register_component(dev, &soc_codec_dev_tas6754, 
+                                         tas6754_dai, ARRAY_SIZE(tas6754_dai));
+    if (ret < 0) {
+        dev_err(dev, "unable to register codec: %d\n", ret);
+        goto disable_regs;
+    }
+
+    /* Schedule initial fault check */
+    schedule_delayed_work(&tas6754->fault_check_work, 
+                         msecs_to_jiffies(TAS6754_FAULT_CHECK_INTERVAL_MS));
+
+    dev_info(dev, "TAS6754 initialized successfully\n");
+    return 0;
 
 disable_regs:
-	regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
-	return ret;
+    /* Power down the device */
+    tas6754->powered = false;
+    
+    if (tas6754->stby_gpio)
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
+    
+    msleep(10);
+    
+    if (tas6754->pd_gpio)
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 0);
+    
+    regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+    return ret;
 }
 
 static void tas6754_i2c_remove(struct i2c_client *client)
