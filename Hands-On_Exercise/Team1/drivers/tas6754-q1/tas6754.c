@@ -25,10 +25,6 @@
 
 #include "tas6754.h"
 
-/** @defgroup driver_internal Internal Driver Functions
- *  @{
- */
-
 /* Define how often to check (and clear) the fault status register (in ms) */
 #define TAS6754_FAULT_CHECK_50MS 	 	(50)
 #define TAS6754_FAULT_CHECK_100MS 	 	(100)
@@ -63,7 +59,7 @@
  *    - Powers the digital core and I/O interfaces
  *    - Should be connected to a 3.3V regulated supply
  *    - Used for DSP, control logic, and digital interfaces
- *    - Operating voltage: 3.3V ±10%
+ *    - Operating voltage: 3.3V +-10%
  * 
  * Note 1: The order of these supplies is important for power sequencing.
  * During power-up, they should be enabled in the order listed (PVDD, VBAT, DVDD).
@@ -74,8 +70,8 @@
  * 
  * Note 2: For power suply sequence, when using the Linux regulator framework APIs, regulators are typically enabled in the order
  * they appear in the array and disabled in reverse order.
- * So, if your array has indices 0, 1, 2, the power-up sequence would access them in order 0→1→2,
- * and the power-down sequence would access them in order 2→1→0.
+ * So, if your array has indices 0, 1, 2, the power-up sequence would access them in order 0->1->2,
+ * and the power-down sequence would access them in order 2->1->0.
  *
  * This ensures that during power-up, VBAT is applied before DVDD, avoiding the documented fault condition from the datasheet.
  * 
@@ -325,18 +321,18 @@ static int tas6754_dac_event(struct snd_soc_dapm_widget *w,
  * The mapping configurations are as follows:
  *
  * - "Config 0 (1-2-3-4)": Default mapping
- *   Slot 1 → Channel 1, Slot 2 → Channel 2, Slot 3 → Channel 3, Slot 4 → Channel 4
+ *   Slot 1 -> Channel 1, Slot 2 -> Channel 2, Slot 3 -> Channel 3, Slot 4 -> Channel 4
  *
  * - "Config 1 (1-2-4-3)": Rear channels swapped
- *   Slot 1 → Channel 1, Slot 2 → Channel 2, Slot 3 → Channel 4, Slot 4 → Channel 3
+ *   Slot 1 -> Channel 1, Slot 2 -> Channel 2, Slot 3 -> Channel 4, Slot 4 -> Channel 3
  *
  * - "Config 2 (1-3-2-4)": Middle channels swapped
- *   Slot 1 → Channel 1, Slot 2 → Channel 3, Slot 3 → Channel 2, Slot 4 → Channel 4
+ *   Slot 1 -> Channel 1, Slot 2 -> Channel 3, Slot 3 -> Channel 2, Slot 4 -> Channel 4
  *
  * [... continues through all 24 configurations ...]
  *
  * - "Config 23 (4-3-1-2)": Complex rearrangement
- *   Slot 1 → Channel 4, Slot 2 → Channel 3, Slot 3 → Channel 1, Slot 4 → Channel 2
+ *   Slot 1 -> Channel 4, Slot 2 -> Channel 3, Slot 3 -> Channel 1, Slot 4 -> Channel 2
  *
  * These predefined configurations enable:
  *
@@ -416,7 +412,7 @@ static const struct soc_enum tas6754_ch_map_config_enum =
  *    - Physical output widgets
  *    - Represents the bridge-tied load (BTL) outputs to speakers
  *    - Four independent output channels
- *    - Capable of delivering up to 30W per channel into 4Ω loads
+ *    - Capable of delivering up to 30W per channel into 4-ohm loads
  * 
  * The DAC widgets include event handlers (tas6754_dac_event) that manage power
  * sequencing and fault monitoring during power-up and power-down transitions.
@@ -594,7 +590,7 @@ static const struct snd_kcontrol_new tas6754_ch4_mux =
  *    of the TAS6754 amplifier.
  *
  * The complete audio path for each channel is:
- * AIF IN → CHx Map → DSP → CHx Volume → CHx DAC → CHx DRV → OUTx
+ * AIF IN -> CHx Map -> DSP -> CHx Volume -> CHx DAC -> CHx DRV -> OUTx
  *
  * This flexible routing architecture allows for:
  * - Dynamic channel mapping through ALSA controls
@@ -1478,9 +1474,21 @@ static int tas6754_configure_sdin2(struct snd_soc_component *component, int gpio
     return 0;
 }
 
-/* ALSA Controls for Low Latency Configuration */
-
-//TODO: understand the purpose of this function and adapt as needed
+/**
+ * @brief tas6754_low_latency_get - Get low latency mode status
+ * 
+ * This function retrieves the current state of the low latency mode for the TAS6754
+ * amplifier. Low latency mode provides reduced audio processing delay for applications
+ * requiring minimal latency, such as gaming or interactive audio.
+ * 
+ * The function reads the ll_enabled flag from the driver's private data structure
+ * and returns it to the user space through the ALSA control interface.
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 0 on success.
+ */
 static int tas6754_low_latency_get(struct snd_kcontrol *kcontrol,
                                  struct snd_ctl_elem_value *ucontrol)
 {
@@ -1491,7 +1499,22 @@ static int tas6754_low_latency_get(struct snd_kcontrol *kcontrol,
     
     return 0;
 }
-//TODO: understand the purpose of this function and adapt as needed
+
+/**
+ * @brief tas6754_low_latency_put - Set low latency mode
+ * 
+ * This function enables or disables the low latency mode for the TAS6754 amplifier.
+ * When enabled, the amplifier processes audio with minimal delay, which is useful
+ * for applications requiring real-time audio response.
+ * 
+ * The function calls tas6754_configure_low_latency() to apply the necessary
+ * hardware configuration changes when the mode is changed.
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 1 if the value was changed, 0 if unchanged, or a negative error code.
+ */
 static int tas6754_low_latency_put(struct snd_kcontrol *kcontrol,
                                  struct snd_ctl_elem_value *ucontrol)
 {
@@ -1509,7 +1532,22 @@ static int tas6754_low_latency_put(struct snd_kcontrol *kcontrol,
     
     return 1;
 }
-//TODO: understand the purpose of this function and adapt as needed
+
+/**
+ * @brief tas6754_ll_offset_get - Get low latency offset value
+ * 
+ * This function retrieves the current low latency offset value for the TAS6754
+ * amplifier. The offset determines the position of low latency audio data within
+ * the TDM frame, measured in SCLKs from the frame sync.
+ * 
+ * The function reads the ll_offset value from the driver's private data structure
+ * and returns it to the user space through the ALSA control interface.
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 0 on success.
+ */
 static int tas6754_ll_offset_get(struct snd_kcontrol *kcontrol,
                                struct snd_ctl_elem_value *ucontrol)
 {
@@ -1520,7 +1558,22 @@ static int tas6754_ll_offset_get(struct snd_kcontrol *kcontrol,
     
     return 0;
 }
-//TODO: understand the purpose of this function and adapt as needed
+
+/**
+ * @brief tas6754_ll_offset_put - Set low latency offset value
+ * 
+ * This function sets the low latency offset value for the TAS6754 amplifier.
+ * The offset specifies the position (in SCLKs from frame sync) where the low
+ * latency audio data is located within the TDM frame.
+ * 
+ * If low latency mode is currently enabled and TDM mode is active, the function
+ * immediately applies the new offset by calling tas6754_configure_low_latency().
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 1 if the value was changed, 0 if unchanged, or a negative error code.
+ */
 static int tas6754_ll_offset_put(struct snd_kcontrol *kcontrol,
                                struct snd_ctl_elem_value *ucontrol)
 {
@@ -1545,11 +1598,23 @@ static int tas6754_ll_offset_put(struct snd_kcontrol *kcontrol,
     
     return 1;
 }
-/* ALSA Controls for Low Latency Configuration */
 
-/* ALSA Controls for Channel Swap Configuration */
-
-//TODO: understand the purpose of this function and adapt as needed
+/**
+ * @brief tas6754_audio_swap_get - Get audio channel swap configuration
+ * 
+ * This function retrieves the current audio channel swap configuration for the
+ * TAS6754 amplifier. Channel swapping allows for flexible routing of audio channels
+ * within the device, enabling various speaker configurations without changing
+ * the input audio stream.
+ * 
+ * The function reads the audio_swap value from the driver's private data structure
+ * and returns it to the user space through the ALSA control interface.
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 0 on success.
+ */
 static int tas6754_audio_swap_get(struct snd_kcontrol *kcontrol,
                                 struct snd_ctl_elem_value *ucontrol)
 {
@@ -1560,7 +1625,27 @@ static int tas6754_audio_swap_get(struct snd_kcontrol *kcontrol,
     
     return 0;
 }
-//TODO: understand the purpose of this function and adapt as needed
+
+/**
+ * @brief tas6754_audio_swap_put - Set audio channel swap configuration
+ * 
+ * This function sets the audio channel swap configuration for the TAS6754 amplifier.
+ * It allows remapping of input audio channels to different output channels, providing
+ * flexibility in system design without changing the audio stream format.
+ * 
+ * If TDM mode is active, the function immediately applies the new swap configuration
+ * by updating the SDIN_CH_SWAP register.
+ * 
+ * The swap value is a 5-bit field that controls how audio channels are mapped:
+ * - Bits 0-1: CH1 source selection
+ * - Bits 2-3: CH2 source selection
+ * - Bit 4: CH3/CH4 swap control
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 1 if the value was changed, 0 if unchanged, or a negative error code.
+ */
 static int tas6754_audio_swap_put(struct snd_kcontrol *kcontrol,
                                 struct snd_ctl_elem_value *ucontrol)
 {
@@ -1594,7 +1679,22 @@ static int tas6754_audio_swap_put(struct snd_kcontrol *kcontrol,
     
     return 1;
 }
-//TODO: understand the purpose of this function and adapt as needed
+
+/**
+ * @brief tas6754_ll_swap_get - Get low latency channel swap configuration
+ * 
+ * This function retrieves the current low latency channel swap configuration for
+ * the TAS6754 amplifier. This setting controls how low latency audio channels
+ * are mapped within the device when low latency mode is enabled.
+ * 
+ * The function reads the ll_swap value from the driver's private data structure
+ * and returns it to the user space through the ALSA control interface.
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 0 on success.
+ */
 static int tas6754_ll_swap_get(struct snd_kcontrol *kcontrol,
                              struct snd_ctl_elem_value *ucontrol)
 {
@@ -1605,7 +1705,27 @@ static int tas6754_ll_swap_get(struct snd_kcontrol *kcontrol,
     
     return 0;
 }
-//TODO: understand the purpose of this function and adapt as needed
+
+/**
+ * @brief tas6754_ll_swap_put - Set low latency channel swap configuration
+ * 
+ * This function sets the low latency channel swap configuration for the TAS6754
+ * amplifier. It allows remapping of low latency input channels to different output
+ * channels when low latency mode is enabled.
+ * 
+ * If TDM mode and low latency mode are both active, the function immediately applies
+ * the new swap configuration by updating the SDIN_CH_SWAP and SDIN_OFFSET_MSB registers.
+ * 
+ * The swap value is a 4-bit field that controls how low latency channels are mapped,
+ * with bits split across two registers:
+ * - Bits 0-2: Stored in bits 7-5 of SDIN_CH_SWAP register
+ * - Bit 3: Stored in bit 2 of SDIN_OFFSET_MSB register
+ * 
+ * @param kcontrol: The ALSA control interface
+ * @param ucontrol: Value container for the control
+ *
+ * @return Returns 1 if the value was changed, 0 if unchanged, or a negative error code.
+ */
 static int tas6754_ll_swap_put(struct snd_kcontrol *kcontrol,
                              struct snd_ctl_elem_value *ucontrol)
 {
@@ -3174,8 +3294,6 @@ static struct i2c_driver tas6754_i2c_driver = {
 	.id_table = tas6754_i2c_ids,
 };
 module_i2c_driver(tas6754_i2c_driver);
-
-/** @} */
 
 MODULE_AUTHOR("Your Name <your.email@example.com>");
 MODULE_DESCRIPTION("TAS6754 Audio amplifier driver");
