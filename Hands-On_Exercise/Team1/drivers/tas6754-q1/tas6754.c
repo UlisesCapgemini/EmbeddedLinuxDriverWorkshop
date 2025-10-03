@@ -1731,28 +1731,17 @@ static int tas6754_power_off(struct snd_soc_component *component)
  * Load Diagnostics to finish.
  * The procedure implementation for a quick-start sequence is PENDING. In future, evaluate the possibility of adding this feature.
  */
+
 /**
  * tas6754_power_on - Power on the TAS6754 audio amplifier
- * @brief: Implements the power-on sequence for the TAS6754 Class-D
+ * @brief: This function implements the power-on sequence for the TAS6754 Class-D
  * amplifier according to the datasheet specifications. The sequence includes:
- *
- * 1. Keeping PD and STBY pins low initially
- * 2. Enabling power supplies (PVDD, VBAT, DVDD)
- * 3. Releasing PD pin to power up digital circuitry
- * 4. Waiting 4ms as specified in the datasheet
- * 5. Enabling register access and synchronizing register cache
- * 6. Checking and clearing any power-on-reset (POR) faults
- * 7. Releasing STBY pin to power up analog circuitry
- * 8. Setting initial channel states (PLAY with appropriate mute settings)
- * 9. Waiting for device initialization and auto-diagnostics to complete
- *
- * The function handles both GPIO-based control (using pd_gpio and stby_gpio)
- * and register-based control when GPIOs are not available. It also properly
- * configures the initial state of the amplifier channels based on the
- * availability of an external mute circuit.
- *
- * After successful execution, the amplifier will be in a powered-on state
- * but typically still muted, ready for audio playback to begin.
+ * keeping PD and STBY pins low initially, enabling power supplies, releasing
+ * PD pin, waiting 4ms, enabling register access, checking for faults,
+ * releasing STBY pin, setting initial channel states, and waiting for
+ * device initialization and auto-diagnostics to complete.
+ 
+ * @component: The ALSA SoC component representing the TAS6754
  *
  * @return: Return 0 on success, negative error code on failure
  */
@@ -1760,11 +1749,18 @@ static int tas6754_power_on(struct snd_soc_component *component)
 {
     struct tas6754_data *tas6754 = snd_soc_component_get_drvdata(component);
     int ret;
-    u8 chan_states;
     int no_auto_diags = 0;
     unsigned int reg_val;
 
     dev_dbg(component->dev, "%s: Powering on TAS6754\n", __func__);
+
+    /* Check if already powered on */
+    if (tas6754->powered) {
+        dev_dbg(component->dev, "TAS6754 already powered on\n");
+        return 0;
+    }
+
+    mutex_lock(&tas6754->mutex);
 
     /* 1. Keep PD and STBY pins low initially */
     if (tas6754->pd_gpio)
@@ -1774,14 +1770,16 @@ static int tas6754_power_on(struct snd_soc_component *component)
         gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
 
     /* 2. Check for DC load diagnostics bypass setting */
-    if (!regmap_read(tas6754->regmap, TAS6754_DC_LDG_CTRL, &reg_val))
+    if (!regmap_read(tas6754->regmap, TAS6754_DC_LDG_CTRL, &reg_val)) {
         no_auto_diags = reg_val & TAS6754_DC_LDG_BYPASS_MASK;
+        tas6754->dc_load_diag_config = reg_val; /* Store current config */
+    }
 
     /* 3. Enable power supplies */
     ret = regulator_bulk_enable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
     if (ret < 0) {
         dev_err(component->dev, "failed to enable supplies: %d\n", ret);
-        return ret;
+        goto err_unlock;
     }
 
     /* 4. Wait for supplies to stabilize */
@@ -1796,10 +1794,14 @@ static int tas6754_power_on(struct snd_soc_component *component)
 
     /* 7. Enable register access */
     regcache_cache_only(tas6754->regmap, false);
-    ret = regcache_sync(tas6754->regmap);
-    if (ret < 0) {
-        dev_err(component->dev, "failed to sync regcache: %d\n", ret);
-        goto err_disable_supplies;
+    
+    if (tas6754->cache_sync) {
+        ret = regcache_sync(tas6754->regmap);
+        if (ret < 0) {
+            dev_err(component->dev, "failed to sync regcache: %d\n", ret);
+            goto err_disable_supplies;
+        }
+        tas6754->cache_sync = false;
     }
 
     /* 8. Check and clear any power faults */
@@ -1812,17 +1814,19 @@ static int tas6754_power_on(struct snd_soc_component *component)
     if (reg_val & BIT(7)) {
         dev_dbg(component->dev, "POR fault detected, clearing\n");
         /* Fault is cleared by reading the register (already done above) */
+        tas6754->last_power_fault = reg_val; /* Store fault info */
     }
 
     /* 9. Release STBY pin to power up analog circuitry */
     if (tas6754->stby_gpio)
         gpiod_set_value_cansleep(tas6754->stby_gpio, 1);
 
-    /* 10. Set initial channel states to either PLAY with normal volume or PLAY with mute depending on mute GPIO availability.*/
+    /* 10. Set initial channel states to either PLAY with normal volume or PLAY with mute depending on mute GPIO availability. */
     if (tas6754->mute_gpio) {
         /* If using external mute circuit, set channels to PLAY state */
         /* but keep them muted via the GPIO */
         gpiod_set_value_cansleep(tas6754->mute_gpio, 1); /* Muted */
+        tas6754->muted = true;
         
         /* Set channels to PLAY state with normal volume in registers */
         ret = snd_soc_component_write(component, TAS6754_STATE_CTRL_CH1_CH2, TAS6754_STATE_CTRL_CH1_CH2_PLAY__NORMAL_VOLUME);
@@ -1848,6 +1852,7 @@ static int tas6754_power_on(struct snd_soc_component *component)
             dev_err(component->dev, "Failed to set CH3/CH4 to PLAY state but MUTE: %d\n", ret);
             goto err_disable_supplies;
         }
+        tas6754->muted = true;
     }
 
     /* 11. Wait for device to fully power up */
@@ -1857,25 +1862,53 @@ static int tas6754_power_on(struct snd_soc_component *component)
     if (!no_auto_diags)
         msleep(230);
 
-    /** 
-	* @TODO:
-	* 13. Unmute if using external mute circuit and ready to play audio */
-    /* Note: You might want to move this to a separate unmute function */
-    /*
-    if (tas6754->mute_gpio)
-        gpiod_set_value_cansleep(tas6754->mute_gpio, 0);
-    */
+    /* Set volume levels from stored values */
+    ret = snd_soc_component_write(component, TAS6754_DIG_VOL_CH1, tas6754->volume[0]);
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to set CH1 volume: %d\n", ret);
+        goto err_disable_supplies;
+    }
+    
+    ret = snd_soc_component_write(component, TAS6754_DIG_VOL_CH2, tas6754->volume[1]);
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to set CH2 volume: %d\n", ret);
+        goto err_disable_supplies;
+    }
+    
+    ret = snd_soc_component_write(component, TAS6754_DIG_VOL_CH3, tas6754->volume[2]);
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to set CH3 volume: %d\n", ret);
+        goto err_disable_supplies;
+    }
+    
+    ret = snd_soc_component_write(component, TAS6754_DIG_VOL_CH4, tas6754->volume[3]);
+    if (ret < 0) {
+        dev_err(component->dev, "Failed to set CH4 volume: %d\n", ret);
+        goto err_disable_supplies;
+    }
 
+    /* Update power state */
+    tas6754->powered = true;
+
+    mutex_unlock(&tas6754->mutex);
     dev_dbg(component->dev, "%s: TAS6754 powered on\n", __func__);
     return 0;
 
 err_disable_supplies:
+    if (tas6754->stby_gpio)
+        gpiod_set_value_cansleep(tas6754->stby_gpio, 0);
+    
+    msleep(10);
+    
+    if (tas6754->pd_gpio)
+        gpiod_set_value_cansleep(tas6754->pd_gpio, 0);
+    
     regulator_bulk_disable(ARRAY_SIZE(tas6754->supplies), tas6754->supplies);
+
+err_unlock:
+    mutex_unlock(&tas6754->mutex);
     return ret;
 }
-
-
-
 
 
 static int tas6754_set_bias_level(struct snd_soc_component *component, enum snd_soc_bias_level level)
